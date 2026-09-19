@@ -110,6 +110,40 @@ sentence worth its length.
 
 **Lowercase `.md`.** `SKILL.MD` is invisible on a case-sensitive filesystem.
 
+**Project-local, not personal.** `<repo>/.claude/skills/`, never
+`~/.claude/skills/`. Project-local means it lands in git, gets reviewed, and
+travels with the repo that needs it.
+
+**Cap the body around 100 lines.** If the procedure needs heavy reference —
+a schema, a long table, an API surface — that goes in `knowledge/<topic>.md`
+and gets linked. A skill that inlines its own reference recreates the tier-1
+problem one level down: it all loads the moment the skill fires.
+
+---
+
+## Capturing a skill automatically
+
+Skills are the one thing in this layout that Claude creates on its own
+initiative. The `skill-capture` skill writes the file and reports it in one
+line, without asking first. That is deliberate: a new file under
+`.claude/skills/` is additive, uncommitted, and one `git checkout` from gone,
+while a skill that requires permission to exist mostly does not get created.
+
+The cost is sprawl, so the filters are the whole job:
+
+- **Check first.** Extend an existing skill before creating a sibling. Two
+  descriptions competing for the same trigger means neither fires reliably.
+- **Confirm it is a skill at all.** Run the classification test. Path-conditional
+  knowledge is a tier-2 rule. Reference is `knowledge/`. Derivable is nothing.
+- **A one-off is not repeatable.** Effort spent is not the test; expecting it
+  again is.
+- **A single command is a `CLAUDE.md` line**, not a skill.
+- **No secrets.** If the procedure needs a credential, write the *name* of the
+  variable and where it comes from, never the value.
+
+Pruning is `/context-init` Mode B, which now audits `.claude/skills/` for
+near-duplicates, capability-shaped descriptions, and oversized bodies.
+
 ---
 
 ## Commands
@@ -126,7 +160,9 @@ is reusable and where it is not reloaded every time the command list renders.
 
 ## When it should not be knowledge at all
 
-Three escape hatches worth proposing rather than writing another rule:
+Three escape hatches worth proposing rather than writing another rule. (Skills
+used to be on this list. They are not any more — `skill-capture` creates them
+outright. These three still need the user's say-so.)
 
 - **A hook**, when a rule would be an incident rather than an annoyance if
   ignored once. Hooks cost zero context until they fire, so a guarantee is

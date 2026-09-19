@@ -111,6 +111,38 @@ tie-break**, so it can be revisited when the visible failure shows up.
 This is also why "when in doubt, put it in `CLAUDE.md`" is exactly backwards,
 despite being the intuitive default.
 
+## Where hooks sit
+
+Hooks are not a tier. They are the escape hatch from the whole model.
+
+A tier is a place to put knowledge so that Claude *reads* it and, hopefully,
+acts on it. A hook does not ask — it runs. That makes it the right answer for
+anything where being ignored once is an incident rather than an annoyance, and
+it is why `docs/authoring.md` says that anything you find yourself restating in
+three tiers is really a hook.
+
+There is one trap worth naming, because it looks like a free lunch.
+
+**A `SessionStart` hook that injects context costs exactly what the same text
+would cost in `CLAUDE.md`.** The `additionalContext` it returns is loaded into
+the session like any other standing instruction, on every session and every
+subagent. Moving a paragraph out of `CLAUDE.md` and into a hook does not make
+it cheaper; it only makes it ship with a plugin instead of with the repo.
+
+So the rule for hooks mirrors the rule for tier 1:
+
+- **Hooks that run and produce no output are free.** A `PostToolUse` hook that
+  appends a line to a ledger, a check that blocks a bad command — these cost
+  nothing in context until something goes wrong.
+- **Hooks that inject text are tier 1 wearing a different hat.** Subject to the
+  same line budget and the same classification test. context-kit's own injected
+  ruleset is about thirty lines for exactly this reason; the rest of it lives
+  in `skills/lean-execution/`, which loads only when invoked.
+
+The honest summary: use a hook for a *guarantee*, and a tier for *knowledge*.
+Injecting knowledge from a hook gets you the cost of tier 1 with the
+discoverability of tier 3, which is the worst of both.
+
 ## Record the why, not the what
 
 Across all three tiers, the content that earns its place is **rationale**:

@@ -1,0 +1,88 @@
+context-kit
+Copyright (c) 2026 avillalv-es
+Licensed under the MIT License. See LICENSE.
+
+================================================================================
+Third-party material
+================================================================================
+
+This product includes material adapted from **ponytail**, absorbed at commit
+e3ba2aa (v4.10.0).
+
+    ponytail — https://github.com/DietrichGebert/ponytail
+    Copyright (c) Dietrich Gebert
+    Licensed under the MIT License.
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the "Software"),
+    to deal in the Software without restriction, including without limitation
+    the rights to use, copy, modify, merge, publish, distribute, sublicense,
+    and/or sell copies of the Software, and to permit persons to whom the
+    Software is furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
+
+--------------------------------------------------------------------------------
+What was taken, and where it lives now
+--------------------------------------------------------------------------------
+
+Copied, with edits:
+
+  ponytail/docs/platform-native.md
+    -> knowledge/platform-native.md
+    Table content retained verbatim. Added .NET/C# and Data-and-Analytics
+    sections; reworded the intro to drop the persona.
+
+Adapted:
+
+  ponytail/skills/ponytail/SKILL.md
+    -> hooks/rules.md and skills/lean-execution/SKILL.md
+    The seven-rung ladder; the persistence clause; "the ladder runs after you
+    understand the problem, not instead of it"; root-cause-not-symptom; the
+    rules block; the output discipline; the lite/full/ultra levels; the safety
+    carve-outs; the one-runnable-check rule; the shortcut-marker convention.
+
+  ponytail/skills/ponytail-review/SKILL.md
+  ponytail/skills/ponytail-audit/SKILL.md
+    -> skills/lean-review/SKILL.md
+    The five-tag finding grammar, the anti-example pair, the hunt list, and the
+    net-lines scoring. Merged into one skill with a --repo scope flag.
+
+  ponytail/skills/ponytail-debt/SKILL.md
+    -> skills/shortcut-ledger/SKILL.md
+    The grep-based harvest, the row grammar, and the no-trigger rot tag.
+
+  ponytail/skills/ponytail-gain/SKILL.md
+    -> skills/lean-execution/SKILL.md
+    Only the honesty guard: never print a per-repo savings number, because the
+    version that was not built has no baseline to subtract from. The benchmark
+    figures were not carried over; ponytail's own README retracts them.
+
+  ponytail/hooks/*.js
+    -> hooks/context-kit.sh, hooks/context-kit.ps1
+    Reimplemented in POSIX sh and PowerShell, not copied. The patterns taken
+    are: fail-open on every error path; SubagentStart propagation, and its
+    requirement of the hookSpecificOutput form; path sanitization before a
+    shell; the once-only nudge flag; whole-message matching for deactivation
+    phrases; a hardcoded fallback ruleset; and level-filtered injection.
+
+--------------------------------------------------------------------------------
+Divergence
+--------------------------------------------------------------------------------
+
+This is an absorption, not a dependency. context-kit does not track ponytail
+upstream and will not receive its fixes. The marker comment prefix is
+`shortcut:` here, not `ponytail:`.
+
+ponytail remains the better choice if you want the original, its multi-host
+adapters, or its benchmark suite. Running both at once injects two overlapping
+rulesets; pick one.

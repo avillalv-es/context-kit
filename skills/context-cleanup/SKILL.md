@@ -1,16 +1,19 @@
 ---
 name: context-cleanup
-description: Use when the user runs /context-init, or asks to set up, initialize, clean up, tier, audit, reorganize, or trim the context layout or CLAUDE.md, or asks where something should live in the three-tier layout. Explicit invocation only. Never invoke this during an unrelated task.
+description: Use when the user runs /context-init, or asks to set up, initialize, clean up, tier, audit, reorganize, or trim this repo's three-tier context layout or its CLAUDE.md, or asks which tier a piece of project knowledge belongs in. Also use in Mode 0 when the context-kit session-start hook reports that this project has no context layout yet. Scaffolds .claude/rules/, knowledge/ and findings/, and rebalances CLAUDE.md against a 200-line cap. Explicit invocation or hook request only. Never invoke this during an unrelated task.
 ---
 
 # Context layout: initialize and clean up
 
-This skill has two modes. Pick one, announce it in a single line, and follow
+This skill has three modes. Pick one, announce it in a single line, and follow
 that mode's workflow.
 
+- **Mode 0: Bootstrap** — the session-start hook asked for it, or the user
+  wants the layout in place with no survey. Scaffold and stamp the marker,
+  nothing else. Cheap, idempotent, always safe to run.
 - **Mode A: Initialize** — no `CLAUDE.md`, or one that lacks a
-  `## Context layout` section. Scaffold the layout and adopt any existing
-  content into it.
+  `## Context layout` section. Scaffold the layout, survey the repo, and adopt
+  any existing content into it.
 - **Mode B: Cleanup** — the layout already exists. Audit and rebalance it.
 
 Both modes share one goal: place every piece of knowledge in the cheapest tier
@@ -44,6 +47,44 @@ tier 2 produces invisible drag on every session forever.
 
 ---
 
+## Mode 0: Bootstrap
+
+The automatic path. The session-start hook runs this when a project has no
+`## Context layout` marker. It is deliberately the cheapest useful thing: no
+survey, no judgment, no questions. Do it, say one line, and get back to
+whatever the user actually asked for.
+
+### 0.1 — Scaffold
+
+Create, without overwriting anything that exists:
+
+```
+.claude/rules/.gitkeep
+knowledge/.gitkeep
+knowledge/INDEX.md
+findings/.gitkeep
+```
+
+`knowledge/INDEX.md` gets a heading and one line explaining that each entry is
+a topic file named for what someone would search for.
+
+### 0.2 — Stamp the marker
+
+If `CLAUDE.md` does not exist, create it with a title line and the stub from
+A4. If it exists, **append** the stub — never overwrite, never reorder, never
+reword what is already there.
+
+### 0.3 — Report, in one line
+
+```
+context layout bootstrapped: <files created>. For a full survey, run /context-init.
+```
+
+Do not survey the repo. Do not propose moves. Do not classify anything. That is
+Mode A, and it is the user's call to run it.
+
+---
+
 ## Mode A: Initialize
 
 ### A1 — Survey
@@ -54,6 +95,24 @@ Look specifically for things that would be **non-obvious to someone reading
 the code**, since that is the only content worth writing down.
 
 Do not inventory the directory structure. That is derivable.
+
+**Aim the survey at the kind of project this is.** The default questions suit a
+service or an application; they are close to useless elsewhere.
+
+- **Data, analytics or notebooks** — execution order that is not top-to-bottom,
+  dtype and schema assumptions that break silently, where seeds are set and
+  what is non-deterministic without them, how credentials reach the notebook,
+  which cells are expensive to re-run, and which outputs are committed on
+  purpose. There is often no build or lint command at all; do not invent one.
+- **Pipelines, dbt, ETL** — what triggers a run, what is idempotent and what is
+  not, backfill procedure, and which models are contract-bound downstream.
+- **Libraries** — the public surface and what is deliberately not exported,
+  plus the compatibility promise.
+- **Infrastructure** — what is applied by hand versus by CI, and what is
+  dangerous to `plan` against production.
+
+If the repo has no manifest and no test runner, say so plainly rather than
+writing a Commands section full of guesses.
 
 ### A2 — Scaffold
 
@@ -107,6 +166,8 @@ let me decide.
 
 - Conditional knowledge lives in `.claude/rules/` with `paths` frontmatter.
 - Reference and procedures live in `knowledge/` and `.claude/skills/`.
+- A procedure that repeats gets captured into `.claude/skills/`. Tell me in one
+  line after you create it; do not add it here.
 - This file is capped at 200 lines.
 
 To reorganize any of it, run `/context-init`.
@@ -141,6 +202,14 @@ Report, without editorializing:
 Apply the classification test to every line of `CLAUDE.md`. Present as a
 table: line or block, proposed tier, destination path, one-sentence reason.
 Mark rows decided by tie-break.
+
+Keep each reason to one line, in the form
+`L<line>: <verdict> <what>. <destination>.` where verdict is one of
+`tier1: / tier2: / knowledge: / skill: / delete:`. A large repo produces a long
+table, and prose per row turns the audit into the thing it is auditing.
+
+Anything classified `skill:` is a capture candidate — hand those to the
+`skill-capture` skill rather than writing the SKILL.md inline here.
 
 Then flag separately:
 - Anything duplicated across tiers.
@@ -190,9 +259,24 @@ with a line in `INDEX.md`. Filenames and folder structure are the retrieval
 index. A repeated procedure becomes a skill whose description enumerates the
 situations and vocabulary that will appear in a real request.
 
+## Also audit the skills
+
+`.claude/skills/` accumulates on its own now — `skill-capture` creates skills
+without asking. That makes pruning them part of this job:
+
+- **Near-duplicates.** Two descriptions competing for the same trigger means
+  neither fires reliably. Merge them.
+- **Descriptions written as capability statements** rather than trigger
+  conditions. Those never fire, so the skill is pure weight in the picker.
+- **Bodies over ~100 lines.** Split the reference material out into
+  `knowledge/` and link it, so firing the skill does not drag it all in.
+- **Skills nothing has used.** Ask before deleting; a skill that has not fired
+  may have a weak description rather than no purpose.
+
 ## Opportunities to raise
 
-Propose, do not implement:
+Propose, do not implement — with one exception. **Skills are no longer in this
+list:** `skill-capture` creates them outright. The rest still need your say-so:
 
 - **A subagent**, when work here is genuinely isolatable and verbose enough to
   dump large tool output into the main window. Specialization alone is not

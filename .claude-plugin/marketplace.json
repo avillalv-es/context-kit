@@ -2,13 +2,12 @@
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "context-kit",
   "description": "Personal marketplace for context-management tooling.",
-  "owner": {
-    "name": "avillalv-es"
-  },
+  "owner": { "name": "avillalv-es" },
   "plugins": [
     {
       "name": "context-kit",
-      "description": "A three-tier context layout for Claude Code projects: the /context-init command, the context-cleanup skill, and the templates and authoring standards behind them.",
+      "version": "0.2.0",
+      "description": "A three-tier context layout plus a lean execution ruleset: bootstraps CLAUDE.md on first session, captures repeatable procedures as skills automatically, and keeps every tier in the cheapest place that still fires.",
       "author": { "name": "avillalv-es" },
       "category": "productivity",
       "source": "./"
