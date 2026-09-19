@@ -19,7 +19,7 @@ public final class InvoiceService {
 
     public List<Invoice.Line> lines(String sku) {
         List<Invoice.Line> out = new ArrayList<>();
-        out.add(new Invoice.Line(sku, Money.ZERO));
+        out.add(new Invoice.Line(sku, Money.ZERO, Invoice.Line.Kind.GOODS));
         return out;
     }
 

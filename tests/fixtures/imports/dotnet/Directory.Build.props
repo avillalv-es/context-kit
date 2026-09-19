@@ -1,0 +1,11 @@
+<Project>
+
+  <!-- A solution-wide reference. MSBuild applies this to EVERY project in the
+       tree, so it is a real edge out of all five project files. The extractor
+       never sees it: .props is not in the source-extension list, so this file
+       is never opened at all. A silent, whole-repo false negative. -->
+  <ItemGroup>
+    <ProjectReference Include="src\Contoso.Metering.Abstractions\Contoso.Metering.Abstractions.csproj" />
+  </ItemGroup>
+
+</Project>

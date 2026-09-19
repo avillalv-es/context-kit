@@ -1,0 +1,40 @@
+# Expected import edges for the rust fixture.
+# from<TAB>to, one per line. scripts/check.sh asserts this set exactly:
+# a missing line is an edge the extractor stopped finding, an extra line
+# is an edge it invented. Both are regressions.
+#
+# The fixture and an independent list of the edges it should produce were
+# written separately, then reconciled. Every disagreement was read back
+# against the source; the ones that were the extractor being wrong are
+# fixed, and this file is what survived.
+#
+# Regenerate deliberately, never reflexively - the point of the file is
+# that it does not move when the extractor changes.
+crates/telemetry/src/lib.rs	crates/telemetry/src/metrics.rs
+src/config.rs	src/util.rs
+src/handler.rs	src/config.rs
+src/handler.rs	src/handler/detail.rs
+src/handler.rs	src/handler/render.rs
+src/handler.rs	src/store/mod.rs
+src/handler/detail.rs	src/store/mod.rs
+src/handler/render.rs	src/config.rs
+src/handler/render.rs	src/store/mod.rs
+src/handler/render.rs	src/util.rs
+src/main.rs	src/config.rs
+src/main.rs	src/handler.rs
+src/main.rs	src/store/mod.rs
+src/main.rs	src/util.rs
+src/store/memory.rs	src/store/util.rs
+src/store/memory.rs	src/util.rs
+src/store/mod.rs	src/config.rs
+src/store/mod.rs	src/store/memory.rs
+src/store/mod.rs	src/store/telemetry.rs
+src/store/mod.rs	src/store/util.rs
+src/store/sqlite.rs	src/config.rs
+src/store/sqlite.rs	src/store/memory.rs
+src/store/sqlite.rs	src/store/mod.rs
+src/store/sqlite.rs	src/util.rs
+src/store/telemetry.rs	src/config.rs
+src/store/telemetry.rs	src/util.rs
+src/store/util.rs	src/store/mod.rs
+src/store/util.rs	src/util.rs

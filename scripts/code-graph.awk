@@ -89,7 +89,7 @@ function lang_of(e) {
 
 # Extensions tried when a specifier omits one.
 function exts_for(lang) {
-  if (lang == "js") return ".ts .tsx .js .jsx .mjs .cjs .mts .cts .vue .svelte .astro .json"
+  if (lang == "js") return ".ts .tsx .js .jsx .mjs .cjs .mts .cts .d.ts .d.mts .d.cts .vue .svelte .astro .json"
   if (lang == "py") return ".py .pyi"
   if (lang == "rs") return ".rs"
   if (lang == "rb") return ".rb"
@@ -112,46 +112,100 @@ function exts_for(lang) {
 # strings have to be kept - a module specifier IS a string - so an unanchored
 # pattern like require(...) cannot tell a real call from one quoted inside a
 # template literal. The mask is how it tells.
-function decomment(line, lang,   i, n, c, c2, out, q, res) {
+function decomment(line, lang,   i, n, c, c2, c3, out, q, rest, idx, t, tag) {
   out = ""
   strmask = ""
   n = length(line)
-  i = 1
-  if (blockstate == 1) {           # inside /* */
+
+  # --- resume an open block ---------------------------------------------
+  if (blockstate == 1) {                    # inside /* */
     idx = index(line, "*/")
     if (idx == 0) return ""
     blockstate = 0
     i = idx + 2
-  } else if (blockstate == 2) {    # inside a python/ruby block string
+  } else if (blockstate == 2) {             # inside an inline-terminated block string
     idx = index(line, blockq)
     if (idx == 0) return ""
     blockstate = 0
     i = idx + length(blockq)
+  } else if (blockstate == 3) {             # inside a heredoc / nowdoc
+    t = line
+    sub(/^[ \t]+/, "", t); sub(/[ \t]*;?[ \t]*$/, "", t)
+    if (t == blockq) blockstate = 0
+    return ""                               # every line of the body is text
+  } else if (blockstate == 4) {             # inside a Ruby =begin/=end block
+    if (line ~ /^=end/) blockstate = 0
+    return ""
+  } else {
+    if (lang == "rb" && line ~ /^=begin/) { blockstate = 4; return "" }
+    i = 1
   }
+  for (idx = 1; idx < i; idx++) { out = out " "; strmask = strmask "." }
+
   q = ""
   while (i <= n) {
-    c = substr(line, i, 1)
+    c  = substr(line, i, 1)
     c2 = substr(line, i, 2)
+    c3 = substr(line, i, 3)
+
     if (q != "") {
       out = out c
-      if (c == "\\") {
-        out = out substr(line, i + 1, 1); strmask = strmask "SS"; i += 2; continue
-      }
+      if (c == "\\") { out = out substr(line, i + 1, 1); strmask = strmask "SS"; i += 2; continue }
       if (c == q) { q = ""; strmask = strmask "." }
       else strmask = strmask "S"
       i++
       continue
     }
+
     # Triple-quoted block strings: Python docstrings, Java text blocks,
-    # Kotlin raw strings. Their contents are template data, and a wrapped
-    # `import` line inside one looks exactly like a real declaration.
-    if ((lang == "py" || lang == "jvm") && (c2 substr(line, i + 2, 1) == "\"\"\"" || (lang == "py" && c2 substr(line, i + 2, 1) == "'''"))) {
-      blockq = substr(line, i, 3)
+    # Kotlin raw strings. A wrapped import line inside one is template data.
+    if ((lang == "py" || lang == "jvm") &&
+        (c3 == "\"\"\"" || (lang == "py" && c3 == "'''"))) {
+      blockq = c3
       rest = substr(line, i + 3)
       if (index(rest, blockq) > 0) { i = i + 3 + index(rest, blockq) + 2; continue }
       blockstate = 2
       return out
     }
+
+    # C++11 raw string: R"delim( ... )delim". Its body is data even when a
+    # line starts in column zero and reads exactly like a directive, and
+    # only state carried across lines keeps that line out of the graph.
+    if (lang == "c" && c2 == "R\"") {
+      tag = ""
+      idx = i + 2
+      while (idx <= n && substr(line, idx, 1) != "(" && length(tag) < 16) {
+        tag = tag substr(line, idx, 1); idx++
+      }
+      if (idx <= n && substr(line, idx, 1) == "(") {
+        blockq = ")" tag "\""
+        rest = substr(line, idx + 1)
+        if (index(rest, blockq) > 0) { i = idx + index(rest, blockq) + length(blockq); continue }
+        blockstate = 2
+        return out
+      }
+    }
+
+    # Ruby and PHP heredocs / nowdocs. `<<~`, `<<-` and `<<<` are
+    # unambiguous; a bare `<<` counts only before a quote or a capital, so
+    # the append operator (`list << item`) is not mistaken for one.
+    if (lang == "rb" && c2 == "<<") {
+      tag = ""
+      idx = i + 2
+      if (substr(line, idx, 1) == "~" || substr(line, idx, 1) == "-") idx++
+      else if (substr(line, idx, 1) !~ /["'A-Z]/) { out = out c; strmask = strmask "."; i++; continue }
+      if (substr(line, idx, 1) == "'" || substr(line, idx, 1) == "\"") idx++
+      while (idx <= n && substr(line, idx, 1) ~ /[A-Za-z0-9_]/) { tag = tag substr(line, idx, 1); idx++ }
+      if (tag != "") { blockq = tag; blockstate = 3; return out }
+    }
+    if (lang == "php" && c3 == "<<<") {
+      tag = ""
+      idx = i + 3
+      if (substr(line, idx, 1) == "'" || substr(line, idx, 1) == "\"") idx++
+      while (idx <= n && substr(line, idx, 1) ~ /[A-Za-z0-9_]/) { tag = tag substr(line, idx, 1); idx++ }
+      if (tag != "") { blockq = tag; blockstate = 3; return out }
+    }
+
     if (c2 == "/*" && (lang == "js" || lang == "c" || lang == "cs" || lang == "rs" ||
                        lang == "jvm" || lang == "php" || lang == "go")) {
       rest = substr(line, i + 2)
@@ -162,9 +216,19 @@ function decomment(line, lang,   i, n, c, c2, out, q, res) {
     if (c2 == "//" && (lang == "js" || lang == "c" || lang == "cs" || lang == "rs" ||
                        lang == "jvm" || lang == "php" || lang == "go")) return out
     if (c == "#" && (lang == "py" || lang == "rb" || lang == "sh" || lang == "php")) return out
-    if (c == "\"" || c == "'" || (c == "`" && lang == "js")) {
-      q = c; out = out c; strmask = strmask "."; i++; continue
+
+    # A JS template literal that does not close on this line keeps running.
+    # Its body is data, so a require(...) or an import line inside it is
+    # documentation and not a dependency.
+    if (c == "`" && (lang == "js" || lang == "go")) {
+      rest = substr(line, i + 1)
+      if (rest ~ /`/) { q = c; out = out c; strmask = strmask "."; i++; continue }
+      blockq = "`"
+      blockstate = 2
+      return out
     }
+
+    if (c == "\"" || c == "'") { q = c; out = out c; strmask = strmask "."; i++; continue }
     out = out c
     strmask = strmask "."
     i++
@@ -257,22 +321,33 @@ function resolve(from, lang, mod, form, lno,   d, i, n, P, base, hit, up, rest, 
       hit = try_path_js(norm(mod))
       if (hit != "") { emit(from, hit, lang, form, "EXTRACTED", lno); return }
     }
-    # Longest scope wins: in a monorepo the package's own tsconfig must beat
-    # the root one, or every package resolves through the wrong roots.
+    # The nearest self-contained config shadows the outer ones. A package
+    # tsconfig that declares paths and extends nothing does not inherit the
+    # root's aliases, and resolving through them invents an edge for a
+    # specifier that does not compile.
+    shadow = ""
+    for (sc in ownscope) {
+      if (sc == "") continue
+      if (index(from, sc "/") != 1) continue
+      if (length(sc) > length(shadow)) shadow = sc
+    }
+    # Try every matching alias, longest scope and key first, and keep the
+    # first that lands on a real file. A paths entry is a LIST of fallbacks
+    # in TypeScript, so the first candidate not existing is normal.
     best = -1; bestlen = -1
     for (i = 1; i <= nalias; i++) {
       if (alias_scope[i] != "" && index(from, alias_scope[i] "/") != 1) continue
+      if (shadow != "" && alias_scope[i] != shadow) continue
       if (alias_wild[i]) { if (index(mod, alias_from[i]) != 1) continue }
       else               { if (mod != alias_from[i]) continue }
       L = length(alias_scope[i]) * 1000 + length(alias_from[i])
-      if (L > bestlen) { bestlen = L; best = i }
-    }
-    if (best > 0) {
-      base = alias_to[best] (alias_wild[best] ? substr(mod, length(alias_from[best]) + 1) : "")
-      if (alias_scope[best] != "") base = alias_scope[best] "/" base
+      if (L < bestlen) continue
+      base = alias_to[i] (alias_wild[i] ? substr(mod, length(alias_from[i]) + 1) : "")
+      if (alias_scope[i] != "") base = alias_scope[i] "/" base
       hit = try_path_js(norm(base))
-      if (hit != "") { emit(from, hit, lang, form, "INFERRED", lno); return }
+      if (hit != "") { bestlen = L; best = i; besthit = hit }
     }
+    if (best > 0) { emit(from, besthit, lang, form, "INFERRED", lno); return }
     # baseUrl-style bare specifier that is really an internal path.
     if (index(mod, "node:") == 1) { drop(from, mod, "stdlib", lno); return }
     hit = try_path_js(norm(mod))
@@ -287,7 +362,14 @@ function resolve(from, lang, mod, form, lno,   d, i, n, P, base, hit, up, rest, 
       while (substr(mod, up + 1, 1) == ".") up++
       rest = substr(mod, up + 1)
       base = d
-      for (i = 2; i <= up; i++) { if (base == "") { drop(from, mod, "climbs-above-root", lno); return } ; base = dirname(base) }
+      for (i = 2; i <= up; i++) {
+        if (base == "") { drop(from, mod, "climbs-above-package", lno); return }
+        base = dirname(base)
+      }
+      # Landing ON the repo root means the climb went one level past the
+      # top-level package - Python raises for this. Resolving it anyway lands
+      # on whatever decoy happens to sit at the root.
+      if (base == "" && up > 1) { drop(from, mod, "climbs-above-package", lno); return }
       gsub(/\./, "/", rest)
       base = norm(base (rest == "" ? "" : "/" rest))
       if (base == "") { drop(from, mod, "climbs-above-root", lno); return }
@@ -299,7 +381,10 @@ function resolve(from, lang, mod, form, lno,   d, i, n, P, base, hit, up, rest, 
     gsub(/\./, "/", base)
     hit = try_path(base, "py")
     if (hit == "") hit = try_path("src/" base, "py")
-    if (hit == "") hit = try_suffix(base, "py")
+    # Only a DOTTED name may fall back to a suffix match. A bare `import
+    # logging` is the stdlib, and a repo with any logging.py in it would
+    # otherwise acquire an edge to it from every file in the tree.
+    if (hit == "" && index(base, "/") > 0) hit = try_suffix(base, "py")
     if (hit != "") { emit(from, hit, lang, form, (hit == base ".py" || hit == base "/__init__.py") ? "EXTRACTED" : "INFERRED", lno); return }
     drop(from, mod, (ambiguous ? "ambiguous-name" : "external-or-stdlib"), lno); return
   }
@@ -353,6 +438,10 @@ function resolve(from, lang, mod, form, lno,   d, i, n, P, base, hit, up, rest, 
         }
       }
       if (n > 0) return
+      # No such package: `import static a.b.C.*` names the members of a
+      # TYPE, so retry the same path as a type.
+      hit = try_suffix(base, "jvm")
+      if (hit != "") { emit(from, hit, lang, "import-static-wildcard", "INFERRED", lno); return }
       drop(from, mod, "wildcard-package-not-found", lno); return
     }
     base = mod
@@ -361,8 +450,17 @@ function resolve(from, lang, mod, form, lno,   d, i, n, P, base, hit, up, rest, 
     if (hit != "") { emit(from, hit, lang, form, "EXTRACTED", lno); return }
     # `import static a.b.C.MEMBER` and `import a.b.Outer.Nested` both name
     # something inside a type, so the file is one segment up.
+    # `a.b.Outer.Nested` and `import static a.b.C.MEMBER` name something
+    # inside a type, so the file is one or more segments up.
+    #
+    # Only drop a segment that starts with a CAPITAL. A lowercase tail is a
+    # top-level function or property of a package, which no single file
+    # owns; dropping it lands on whatever same-named file sits beside the
+    # package directory, and that edge is fiction.
     seg = base
-    if (sub(/\/[^\/]*$/, "", seg) && seg != "") {
+    while (seg ~ /\/[A-Z][^\/]*$/) {
+      sub(/\/[^\/]*$/, "", seg)
+      if (seg == "" || seg !~ /\//) break
       hit = try_suffix(seg, "jvm")
       if (hit != "") { emit(from, hit, lang, form, "INFERRED", lno); return }
     }
@@ -429,15 +527,27 @@ function resolve(from, lang, mod, form, lno,   d, i, n, P, base, hit, up, rest, 
   }
 
   if (lang == "php") {
-    if (form == "use") {
+    if (form == "use" || form == "use-group") {
+      # A `use` with no namespace separator is a trait use inside a class
+      # body, not an import. Treating it as one invents an edge to whatever
+      # file happens to be named after the trait.
+      if (mod !~ /\\/) { drop(from, mod, "trait-use-not-an-import", lno); return }
       base = mod
-      gsub(/\\\\/, "/", base)
+      # ONE backslash. /\\\\/ is the regex for two of them, and a PHP
+      # namespace separator is a single one, so nothing was ever replaced.
+      gsub(/\\/, "/", base)
       sub(/^\//, "", base)
+      # Longest PSR-4 prefix wins: with both "App/" -> src/ and
+      # "App/Billing/" -> billing/ registered, the first match is the wrong
+      # one half the time.
+      best = -1; bestlen = -1
       for (i = 1; i <= nalias; i++) {
-        if (index(base, alias_from[i]) == 1) {
-          hit = try_path(norm(alias_to[i] substr(base, length(alias_from[i]) + 1)), "php")
-          if (hit != "") { emit(from, hit, lang, form, "INFERRED", lno); return }
-        }
+        if (index(base, alias_from[i]) != 1) continue
+        if (length(alias_from[i]) > bestlen) { bestlen = length(alias_from[i]); best = i }
+      }
+      if (best > 0) {
+        hit = try_path(norm(alias_to[best] substr(base, length(alias_from[best]) + 1)), "php")
+        if (hit != "") { emit(from, hit, lang, form, "INFERRED", lno); return }
       }
       hit = try_suffix(base, "php")
       if (hit != "") { emit(from, hit, lang, form, "INFERRED", lno); return }
@@ -459,9 +569,15 @@ function resolve(from, lang, mod, form, lno,   d, i, n, P, base, hit, up, rest, 
       if (hit != "") { emit(from, hit, lang, form, "EXTRACTED", lno); return }
       drop(from, mod, "include-not-found", lno); return
     }
-    # <angle> includes are the toolchain's, not the repo's - accept only an
-    # unambiguous file the repo genuinely owns, and mark it inferred.
-    hit = try_suffix(mod, "c")
+    # <angle> includes are the toolchain's. They resolve only against an
+    # explicit include root, never by suffix: <memory> and <string.h> match
+    # src/util/memory.hpp and src/util/string.h in a great many real repos,
+    # and every one of those edges is fiction.
+    hit = ""
+    if (mod ~ /\//) {
+      hit = try_path(norm("include/" mod), "c")
+      if (hit == "") hit = try_path(norm(mod), "c")
+    }
     if (hit != "") { emit(from, hit, lang, form, "INFERRED", lno); return }
     drop(from, mod, "system-header", lno); return
   }
@@ -484,16 +600,64 @@ function grab(line, re, lead, trail,   s) {
   return s
 }
 
+# One Python import statement. Split out so a line carrying several of them,
+# separated by semicolons, can be handled one at a time.
+function py_stmt(from, code, lno,   m, names, nn, NP, i, n, P, s) {
+  if (code ~ /^[ \t]*from[ \t]+[.A-Za-z_]/) {
+    m = code
+    sub(/^[ \t]*from[ \t]+/, "", m)
+    names = m
+    sub(/[ \t].*$/, "", m)
+    if (m != "") resolve(from, "py", m, "from-import", lno)
+    # `from . import ingest, report` names submodules. The package edge is
+    # real too - importing it runs __init__ - so both are emitted.
+    if (names ~ /[ \t]import[ \t]/) {
+      sub(/^[^ \t]*[ \t]+import[ \t]+/, "", names)
+      sub(/#.*$/, "", names); gsub(/[()]/, "", names)
+      nn = split(names, NP, /[ \t]*,[ \t]*/)
+      for (i = 1; i <= nn; i++) {
+        sub(/[ \t]+as[ \t]+.*$/, "", NP[i])
+        gsub(/[ \t]/, "", NP[i])
+        if (NP[i] == "" || NP[i] == "*") continue
+        resolve(from, "py", m (m ~ /\.$/ ? "" : ".") NP[i], "from-import-submodule", lno)
+      }
+    }
+    return
+  }
+  if (code ~ /^[ \t]*import[ \t]+[A-Za-z_.]/) {
+    m = code
+    sub(/^[ \t]*import[ \t]+/, "", m)
+    sub(/[ \t]+as[ \t].*$/, "", m)
+    n = split(m, P, /[ \t]*,[ \t]*/)
+    for (i = 1; i <= n; i++) {
+      s = P[i]; gsub(/[ \t]/, "", s)
+      if (s != "") resolve(from, "py", s, "import", lno)
+    }
+  }
+}
+
 function scan(from,   lang, line, lno, full, code, m, pend, i) {
   lang = lang_of(extof(from))
   if (lang == "") return
   full = (from ~ /^\//) ? from : root "/" from
-  blockstate = 0; blockq = ""; ingo = 0
+  blockstate = 0; blockq = ""; ingo = 0; prevjvm = ""; pyopen = ""
   lno = 0
   pend = ""
   while ((getline line < full) > 0) {
     lno++
+    if (lno == 1) sub(/^\357\273\277/, "", line)   # UTF-8 BOM
+    sub(/\r$/, "", line)                             # a file saved on Windows
     if (lno > 4000) break          # a generated bundle has nothing to say
+    # A TypeScript triple-slash directive is a comment by syntax and a
+    # dependency by meaning, so it must be read before comments are removed.
+    if (lang == "js" && line ~ /^[ \t]*\/\/\/[ \t]*<reference/) {
+      if (match(line, /path[ \t]*=[ \t]*["'"'"'][^"'"'"']+["'"'"']/)) {
+        m = substr(line, RSTART, RLENGTH)
+        sub(/^[^"'"'"']*["'"'"']/, "", m); sub(/["'"'"']$/, "", m)
+        resolve(from, lang, m, "reference-path", lno)
+      }
+      continue
+    }
     code = decomment(line, lang)
     if (code ~ /^[ \t]*$/) continue
 
@@ -508,6 +672,8 @@ function scan(from,   lang, line, lno, full, code, m, pend, i) {
 
     if (lang == "js") {
       if (code ~ /^[ \t]*(import|export)[ \t]/ && code !~ /['"]/ && code !~ /;[ \t]*$/) { pend = code; continue }
+      # `await import(` with the specifier on the following line.
+      if (code ~ /import[ \t]*\([ \t]*$/) { pend = code; continue }
       m = grab(code, "^[ \t]*(import|export)[^'\"]*from[ \t]*['\"][^'\"]+['\"]", 0, 0)
       if (m != "") { sub(/^[^'"]*['"]/, "", m); sub(/['"]$/, "", m); resolve(from, lang, m, "import", lno); }
       m = grab(code, "^[ \t]*import[ \t]*['\"][^'\"]+['\"]", 0, 0)
@@ -525,6 +691,23 @@ function scan(from,   lang, line, lno, full, code, m, pend, i) {
         sub(/^[^'"]*['"]/, "", m); sub(/['"]$/, "", m)
         resolve(from, lang, m, "require", lno)
       }
+      # `require.resolve("...")` is a dependency written the long way.
+      rest = code; off = 0
+      while (match(rest, /require\.resolve[ \t]*\([ \t]*['"][^'"]+['"]/)) {
+        m = substr(rest, RSTART, RLENGTH)
+        quoted = in_string(off + RSTART)
+        off += RSTART + RLENGTH - 1
+        rest = substr(rest, RSTART + RLENGTH)
+        if (quoted) continue
+        sub(/^[^'"]*['"]/, "", m); sub(/['"]$/, "", m)
+        resolve(from, lang, m, "require-resolve", lno)
+      }
+      # A triple-slash reference is how a .d.ts is pulled in.
+      if (match(code, /<reference[ \t]+path[ \t]*=[ \t]*['"][^'"]+['"]/)) {
+        m = substr(code, RSTART, RLENGTH)
+        sub(/^[^'"]*['"]/, "", m); sub(/['"]$/, "", m)
+        resolve(from, lang, m, "reference-path", lno)
+      }
       rest = code; off = 0
       while (match(rest, /import[ \t]*\([ \t]*['"][^'"]+['"]/)) {
         m = substr(rest, RSTART, RLENGTH)
@@ -539,29 +722,41 @@ function scan(from,   lang, line, lno, full, code, m, pend, i) {
     }
 
     if (lang == "py") {
-      if (code ~ /^[ \t]*from[ \t]+[.A-Za-z_]/) {
-        m = code
-        sub(/^[ \t]*from[ \t]+/, "", m)
-        sub(/[ \t].*$/, "", m)
-        if (m != "") resolve(from, lang, m, "from-import", lno)
+      # A parenthesised from-import: the names are on the lines after the
+      # opener, and the first physical line names none of them.
+      if (pyopen != "") {
+        t = code
+        gsub(/[ \t]/, "", t)
+        if (t ~ /\)/) { pyopen = ""; sub(/\).*$/, "", t) }
+        nn = split(t, NP, /,/)
+        for (i = 1; i <= nn; i++) {
+          sub(/as.*$/, "", NP[i])
+          if (NP[i] == "" || NP[i] == "*") continue
+          resolve(from, lang, pybase (pybase ~ /\.$/ ? "" : ".") NP[i], "from-import-submodule", lno)
+        }
         continue
       }
-      if (code ~ /^[ \t]*import[ \t]+[A-Za-z_.]/) {
-        m = code
-        sub(/^[ \t]*import[ \t]+/, "", m)
-        sub(/[ \t]+as[ \t].*$/, "", m)
-        n = split(m, P, /[ \t]*,[ \t]*/)
-        for (i = 1; i <= n; i++) {
-          s = P[i]; gsub(/[ \t]/, "", s)
-          if (s != "") resolve(from, lang, s, "import", lno)
-        }
+      if (code ~ /^[ \t]*from[ \t].*import[ \t]*\([ \t]*$/) {
+        pybase = code
+        sub(/^[ \t]*from[ \t]+/, "", pybase)
+        sub(/[ \t].*$/, "", pybase)
+        if (pybase != "") resolve(from, lang, pybase, "from-import", lno)
+        pyopen = 1
+        continue
       }
+      # `import json; import app.util.reading` is two statements, and a
+      # reader that takes only the first silently loses the second.
+      nsemi = split(code, SC, /;/)
+      for (i = 1; i <= nsemi; i++) py_stmt(from, SC[i], lno)
       continue
     }
 
     if (lang == "go") {
-      if (code ~ /^[ \t]*import[ \t]*\(/) { ingo = 1; }
-      if (ingo && code ~ /^[ \t]*\)/) { ingo = 0; continue }
+      # `import ()` is legal and closes on its own line. A matcher that
+      # opens grouped state here and waits for a line starting with `)`
+      # never closes, and then every quoted string in the file is an import.
+      if (code ~ /^[ \t]*import[ \t]*\(/) { ingo = (code ~ /\)/) ? 0 : 1 }
+      else if (ingo && code ~ /\)/) { ingo = 0; continue }
       m = grab(code, "\"[^\"]+\"", 1, 1)
       if (m != "" && (ingo || code ~ /^[ \t]*import[ \t]/)) resolve(from, lang, m, "import", lno)
       continue
@@ -570,7 +765,22 @@ function scan(from,   lang, line, lno, full, code, m, pend, i) {
     if (lang == "jvm") {
       # An old formatter wraps a long import after a dot. It is still one
       # declaration, and half of it resolves to nothing.
-      if (code ~ /^[ \t]*import[ \t].*\.[ \t]*$/) { pend = code; sub(/[ \t]*$/, "", pend); continue }
+      if (code ~ /^[ \t]*import[ \t].*\.[ \t]*$/) {
+        pend = code; sub(/[ \t]*$/, "", pend); prevjvm = ""; continue
+      }
+      # ...and the other half of the same wrap: a line that STARTS with the
+      # dot, which on its own looks like nothing at all.
+      if (code ~ /^[ \t]*\.[A-Za-z_]/ && prevjvm != "") {
+        m = prevjvm code
+        sub(/^[ \t]*import[ \t]+(static[ \t]+)?/, "", m)
+        gsub(/[ \t]/, "", m); sub(/;.*$/, "", m)
+        prevjvm = ""
+        if (m != "") resolve(from, lang, m, "import", lno)
+        continue
+      }
+      if (code ~ /^[ \t]*import[ \t]/ && code !~ /;/ && code !~ /\*/ && code ~ /[A-Za-z0-9_]$/) {
+        prevjvm = code
+      }
       if (code ~ /^[ \t]*import[ \t]/) {
         m = code
         sub(/[ \t]+as[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*$/, "", m)
@@ -617,16 +827,31 @@ function scan(from,   lang, line, lno, full, code, m, pend, i) {
     }
 
     if (lang == "rb") {
-      m = grab(code, "require_relative[ \t]*\\(?[ \t]*['\"][^'\"]+['\"]", 0, 0)
-      if (m != "") { sub(/^[^'"]*['"]/, "", m); sub(/['"]$/, "", m); resolve(from, lang, m, "require_relative", lno); continue }
-      m = grab(code, "^[ \t]*require[ \t]*\\(?[ \t]*['\"][^'\"]+['\"]", 0, 0)
-      if (m != "") { sub(/^[^'"]*['"]/, "", m); sub(/['"]$/, "", m); resolve(from, lang, m, "require", lno) }
+      rest = code; off = 0; found = 0
+      while (match(rest, "require_relative[ \t]*\\(?[ \t]*['\"][^'\"]+['\"]")) {
+        m = substr(rest, RSTART, RLENGTH)
+        quoted = in_string(off + RSTART)
+        off += RSTART + RLENGTH - 1
+        rest = substr(rest, RSTART + RLENGTH)
+        if (quoted) continue
+        sub(/^[^'"]*['"]/, "", m); sub(/['"]$/, "", m)
+        resolve(from, lang, m, "require_relative", lno)
+        found = 1
+      }
+      if (found) continue
+      if (match(code, "^[ \t]*require[ \t]*\\(?[ \t]*['\"][^'\"]+['\"]") && !in_string(RSTART)) {
+        m = substr(code, RSTART, RLENGTH)
+        sub(/^[^'"]*['"]/, "", m); sub(/['"]$/, "", m)
+        resolve(from, lang, m, "require", lno)
+      }
       continue
     }
 
     if (lang == "php") {
-      m = grab(code, "(require|include)(_once)?[ \t]*\\(?[ \t]*(__DIR__[ \t]*\\.[ \t]*)?['\"][^'\"]+['\"]", 0, 0)
-      if (m != "") {
+      # A `require_once '...'` written inside a string constant names a
+      # real file and reads exactly like the real thing.
+      if (match(code, "(require|include)(_once)?[ \t]*\\(?[ \t]*(__DIR__[ \t]*\\.[ \t]*)?['\"][^'\"]+['\"]") && !in_string(RSTART)) {
+        m = substr(code, RSTART, RLENGTH)
         sub(/^[^'"]*['"]/, "", m); sub(/['"]$/, "", m); sub(/^\//, "", m)
         resolve(from, lang, m, "require", lno); continue
       }
@@ -634,7 +859,17 @@ function scan(from,   lang, line, lno, full, code, m, pend, i) {
         m = code
         sub(/^[ \t]*use[ \t]+(function[ \t]+|const[ \t]+)?/, "", m)
         sub(/[ \t]*;.*$/, "", m); sub(/[ \t]+as[ \t].*$/, "", m); gsub(/[ \t]/, "", m)
-        if (m != "") resolve(from, lang, m, "use", lno)
+        # Group use: `use App\Metering\{Invoice, Receipt};` is several
+        # imports sharing a prefix.
+        if (m ~ /\{/) {
+          pfx = m; sub(/\{.*$/, "", pfx)
+          grp = m; sub(/^[^{]*\{/, "", grp); sub(/\}.*$/, "", grp)
+          ng = split(grp, GP, /,/)
+          for (i = 1; i <= ng; i++) {
+            sub(/[ \t]+as[ \t].*$/, "", GP[i]); gsub(/[ \t]/, "", GP[i])
+            if (GP[i] != "") resolve(from, lang, pfx GP[i], "use-group", lno)
+          }
+        } else if (m != "") resolve(from, lang, m, "use", lno)
       }
       continue
     }
@@ -694,6 +929,8 @@ BEGIN {
       alias_from[nalias]  = A[2]
       alias_to[nalias]    = A[3]
       alias_wild[nalias]  = (A[4] == "0") ? 0 : 1
+      alias_own[nalias]   = (A[5] == "1") ? 1 : 0
+      if (alias_own[nalias]) ownscope[A[1]] = 1
     }
     close(aliases)
   }

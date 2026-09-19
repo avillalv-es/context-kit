@@ -1,0 +1,15 @@
+# Workspace root. The root package is itself a member, and `telemetry` is a
+# path dependency - the two together are what makes `use telemetry::...`
+# below look like an external crate to anything that does not read this file.
+[workspace]
+members = ["crates/telemetry"]
+resolver = "2"
+
+[package]
+name = "appsvc"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+telemetry = { path = "crates/telemetry" }
+serde = { version = "1.0", features = ["derive"] }

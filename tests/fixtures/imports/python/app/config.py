@@ -9,6 +9,7 @@ import os
 from dataclasses import dataclass
 
 DEFAULT_SOURCE = "import requests from the upstream station feed"
+MIGRATION_NOTE = "import app.util.text in 0.3 and drop the shim"
 
 
 @dataclass

@@ -322,11 +322,16 @@ writing `./x.js` for a file called `x.ts`. Anything it cannot resolve
 uniquely is **dropped with a reason**, never guessed — a wrong edge makes you
 stop looking, a missing one only makes you look further.
 
-Twelve language families, each with a fixture under `tests/fixtures/imports/`
-carrying the exact edge set `scripts/check.sh` asserts. The fixtures include
-the traps on purpose: commented-out imports, imports inside string and
-template literals, multi-line imports, colliding basenames, and a sibling
-module whose name is a prefix of the real one.
+Eight language families have a fixture under `tests/fixtures/imports/`
+carrying the exact edge set `scripts/check.sh` asserts — 226 edges in all.
+The fixture and an independent list of the edges it should produce were
+written separately and then reconciled, and the traps are there on purpose:
+imports inside Java text blocks, Kotlin raw strings, C++ raw strings, Ruby
+heredocs, PHP nowdocs and JS template literals; `import ()`; a UTF-8 BOM;
+CRLF; two statements on one line; a wrapped import; colliding basenames; and
+a sibling module whose name is a prefix of the real one. That reconciliation
+found thirteen real defects in the extractor, all fixed and each now pinned
+by a fixture.
 
 Detail, and the full list of what it cannot see, in
 [docs/blast-radius.md](docs/blast-radius.md).

@@ -8,12 +8,19 @@ public final class Invoice {
 
     /** Imported elsewhere as com.acme.billing.Invoice.Line. */
     public static final class Line {
+
+        /** Imported elsewhere as com.acme.billing.Invoice.Line.Kind: a type
+         *  nested TWO levels deep, so one member strip is not enough. */
+        public enum Kind { GOODS, SERVICE }
+
         public final String sku;
         public final Money amount;
+        public final Kind kind;
 
-        public Line(String sku, Money amount) {
+        public Line(String sku, Money amount, Kind kind) {
             this.sku = sku;
             this.amount = amount;
+            this.kind = kind;
         }
     }
 

@@ -3,6 +3,11 @@
 # a missing line is an edge the extractor stopped finding, an extra line
 # is an edge it invented. Both are regressions.
 #
+# The fixture and an independent list of the edges it should produce were
+# written separately, then reconciled. Every disagreement was read back
+# against the source; the ones that were the extractor being wrong are
+# fixed, and this file is what survived.
+#
 # Regenerate deliberately, never reflexively - the point of the file is
 # that it does not move when the extractor changes.
 src/main/java/com/acme/app/Main.java	src/main/java/com/acme/billing/Invoice.java
@@ -10,8 +15,16 @@ src/main/java/com/acme/app/Main.java	src/main/java/com/acme/billing/InvoiceServi
 src/main/java/com/acme/app/Main.java	src/main/java/com/acme/util/Money.java
 src/main/java/com/acme/billing/Invoice.java	src/main/java/com/acme/util/Money.java
 src/main/java/com/acme/billing/InvoiceService.java	src/main/java/com/acme/util/Money.java
+src/main/kotlin/com/acme/app/Dashboard.kt	src/main/java/com/acme/billing/Codec.java
+src/main/kotlin/com/acme/app/Dashboard.kt	src/main/java/com/acme/billing/Invoice.java
+src/main/kotlin/com/acme/app/Dashboard.kt	src/main/kotlin/com/acme/report/Weekly.kt
+src/main/kotlin/com/acme/app/Dashboard.kt	src/main/kotlin/com/acme/util/Codec.kt
 src/main/kotlin/com/acme/app/Reporter.kt	src/main/java/com/acme/util/Money.java
 src/main/kotlin/com/acme/app/Reporter.kt	src/main/kotlin/com/acme/billing/PricingRules.kt
 src/main/kotlin/com/acme/billing/PricingRules.kt	src/main/java/com/acme/util/Money.java
+src/main/kotlin/com/acme/billing/PricingRules.kt	src/main/kotlin/com/acme/util/Codec.kt
 src/main/kotlin/com/acme/billing/PricingRules.kt	src/main/kotlin/com/acme/util/Strings.kt
 src/test/java/com/acme/billing/InvoiceServiceTest.java	src/main/java/com/acme/util/Money.java
+src/test/java/com/acme/billing/PricingTest.java	src/main/java/com/acme/util/Money.java
+src/test/java/com/acme/billing/PricingTest.java	src/main/kotlin/com/acme/util/Codec.kt
+src/test/kotlin/com/acme/report/WeeklyTest.kt	src/main/kotlin/com/acme/report/Weekly.kt

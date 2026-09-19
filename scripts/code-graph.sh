@@ -107,6 +107,9 @@ while IFS= read -r TSC; do
   awk -v scope="$SCOPE" '
     { buf = buf " " $0 }
     END {
+      # A config that does not "extends" another is self-contained, so an
+      # alias the outer config declares does NOT apply to files under it.
+      own = (buf ~ /"extends"[ \t]*:/) ? 0 : 1
       base = ""
       if (match(buf, /"baseUrl"[ \t]*:[ \t]*"[^"]*"/)) {
         base = substr(buf, RSTART, RLENGTH)
@@ -116,21 +119,55 @@ while IFS= read -r TSC; do
       }
       if (!match(buf, /"paths"[ \t]*:[ \t]*\{[^}]*\}/)) exit
       blk = substr(buf, RSTART, RLENGTH)
-      while (match(blk, /"[^"]+"[ \t]*:[ \t]*\[[ \t]*"[^"]+"/)) {
+      # A paths entry is a LIST of fallbacks and TypeScript tries each in
+      # order, so reading only the first loses every alias whose first
+      # candidate does not exist.
+      while (match(blk, /"[^"]+"[ \t]*:[ \t]*\[[^]]*\]/)) {
         seg = substr(blk, RSTART, RLENGTH)
         blk = substr(blk, RSTART + RLENGTH)
         k = seg; sub(/"[ \t]*:.*$/, "", k); sub(/^"/, "", k)
-        v = seg; sub(/^.*\[[ \t]*"/, "", v); sub(/"$/, "", v)
-        # A trailing * means a prefix mapping; without one the key must match
-        # the specifier exactly, or "@lib" would also claim "@library/x".
+        vals = seg; sub(/^[^[]*\[/, "", vals); sub(/\].*$/, "", vals)
         wild = (k ~ /\*$/) ? 1 : 0
-        sub(/\*$/, "", k); sub(/\*$/, "", v); sub(/^\.\//, "", v)
-        if (k == "" || v == "") continue
-        print scope "\t" k "\t" (base == "" ? v : base "/" v) "\t" wild
+        sub(/\*$/, "", k)
+        if (k == "") continue
+        while (match(vals, /"[^"]*"/)) {
+          v = substr(vals, RSTART + 1, RLENGTH - 2)
+          vals = substr(vals, RSTART + RLENGTH)
+          sub(/\*$/, "", v); sub(/^\.\//, "", v)
+          if (v == "") continue
+          print scope "\t" k "\t" (base == "" ? v : base "/" v) "\t" wild "\t" own
+        }
       }
     }
   ' "$TSC" >> "$TMP/aliases.tsv" 2>/dev/null
 done < "$TMP/tsconfigs.txt"
+# package.json "imports" declares #subpath specifiers, which resolve to real
+# files and appear in application code exactly like an alias.
+find . -type f -name 'package.json' ! -path '*/node_modules/*' ! -path './.git/*' \
+     2>/dev/null | sed 's|^\./||' | head -200 > "$TMP/pkgjsons.txt"
+while IFS= read -r PJ; do
+  [ -n "$PJ" ] && [ -f "$PJ" ] || continue
+  SCOPE="$(dirname "$PJ")"
+  [ "$SCOPE" = "." ] && SCOPE=""
+  awk -v scope="$SCOPE" '
+    { buf = buf " " $0 }
+    END {
+      if (!match(buf, /"imports"[ \t]*:[ \t]*\{[^}]*\}/)) exit
+      blk = substr(buf, RSTART, RLENGTH)
+      while (match(blk, /"#[^"]*"[ \t]*:[ \t]*"[^"]*"/)) {
+        seg = substr(blk, RSTART, RLENGTH)
+        blk = substr(blk, RSTART + RLENGTH)
+        k = seg; sub(/"[ \t]*:.*$/, "", k); sub(/^"/, "", k)
+        v = seg; sub(/^.*:[ \t]*"/, "", v); sub(/"$/, "", v)
+        wild = (k ~ /\*$/) ? 1 : 0
+        sub(/\*$/, "", k); sub(/\*$/, "", v); sub(/^\.\//, "", v)
+        if (k == "" || v == "") continue
+        print scope "\t" k "\t" v "\t" wild
+      }
+    }
+  ' "$PJ" >> "$TMP/aliases.tsv" 2>/dev/null
+done < "$TMP/pkgjsons.txt"
+
 # composer PSR-4 does the same job for PHP.
 if [ -f composer.json ]; then
   awk '

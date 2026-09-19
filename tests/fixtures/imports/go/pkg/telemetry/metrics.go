@@ -1,6 +1,10 @@
 package telemetry
 
-import "example.com/appsvc/internal/util"
+// One line carrying three things a matcher has to get right at once: the
+// single-line import form with no parentheses, a /* */ comment that opens
+// and closes mid-line and must not swallow the specifier after it, and a //
+// comment holding a second, different module path that must not be read.
+import /* leaf helper */ "example.com/appsvc/internal/util" // was "example.com/appsvc/internal/store"
 
 // Counter is a named tally.
 type Counter struct {

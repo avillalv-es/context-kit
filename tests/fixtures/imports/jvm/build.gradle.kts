@@ -20,3 +20,8 @@ sourceSets["main"].java.srcDirs("src/main/java")
 tasks.withType<KotlinCompile>().configureEach {
     kotlinOptions.jvmTarget = "17"
 }
+
+// Path shaped and upward traversing, in a file the extractor DOES parse
+// (.kts is a JVM extension). Must resolve to nothing, and must never be
+// followed out of the fixture directory.
+apply(from = "../../../../scripts/code-graph.awk")

@@ -119,12 +119,30 @@ is what NodeNext codebases actually write.
 JavaScript and TypeScript (incl. JSX, Vue, Svelte, Astro), Python, Go,
 Java/Kotlin/Scala/Groovy, C#, Rust, Ruby, PHP, C/C++/Objective-C, shell.
 
-Each has a fixture under `tests/fixtures/imports/<family>/` carrying an
-`EXPECTED.tsv` of the edges the extractor must find. The fixtures include the
-traps on purpose — a commented-out import, an import inside a string literal
-or a template literal, a multi-line import, two files whose basenames collide,
-a sibling module whose name is a prefix of the real one. `scripts/check.sh`
-asserts the exact set, so a missing edge and an invented one both fail.
+Eight families have a fixture under `tests/fixtures/imports/<family>/`
+carrying an `EXPECTED.tsv` of the edges the extractor must find — 226 in
+all. `scripts/check.sh` asserts the exact set, so a missing edge and an
+invented one both fail.
+
+The fixture and the expected-edge list were written independently and then
+reconciled against the source, one disagreement at a time. That is what the
+traps are for, and they earned their keep: an `import` inside a Java text
+block, a Kotlin raw string, a C++ `R"( )"` literal, a Ruby heredoc, a PHP
+nowdoc, a Ruby `=begin` block and a JS template literal all produced real
+edges before the fixtures caught them, as did `#include <memory>`
+suffix-matching `src/util/memory.hpp`, `import logging` matching a repo's
+own `logging.py`, and a `use Roundable;` trait composition read as a
+namespace import. A Go `import ()` left grouped-import state open so every
+later string in the file became a dependency. A UTF-8 BOM and CRLF line
+endings each defeated every anchored pattern in a file. Thirteen defects in
+total, every one now pinned.
+
+The remaining deliberate difference is Python: when a statement is
+`from . import a, b`, this emits an edge to the package `__init__.py` as
+well as to each submodule, because importing a package really does execute
+its `__init__`. The fixture author would emit only the submodules. Both are
+defensible; the extra edge is true, and for a blast radius an edge that is
+true and unhelpful costs far less than one that is missing.
 
 Adding a language means a branch in `scan()` and a branch in `resolve()` in
 `scripts/code-graph.awk`, plus a fixture. No grammar, no dependency.

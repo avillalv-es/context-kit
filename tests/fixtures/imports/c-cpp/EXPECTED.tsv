@@ -1,0 +1,37 @@
+# Expected import edges for the c-cpp fixture.
+# from<TAB>to, one per line. scripts/check.sh asserts this set exactly:
+# a missing line is an edge the extractor stopped finding, an extra line
+# is an edge it invented. Both are regressions.
+#
+# The fixture and an independent list of the edges it should produce were
+# written separately, then reconciled. Every disagreement was read back
+# against the source; the ones that were the extractor being wrong are
+# fixed, and this file is what survived.
+#
+# Regenerate deliberately, never reflexively - the point of the file is
+# that it does not move when the extractor changes.
+include/app/config.h	include/app/log.h
+src/config.c	include/app/config.h
+src/config.c	src/util/strbuf.h
+src/engine.cpp	include/app/log.h
+src/engine.cpp	src/engine.hpp
+src/engine.cpp	src/util/memory.hpp
+src/engine.hpp	include/app/config.h
+src/engine.hpp	src/store/store.h
+src/main.c	include/app/config.h
+src/main.c	include/app/log.h
+src/main.c	src/store/store.h
+src/net/config.h	include/app/config.h
+src/net/config.h	src/util/strbuf.h
+src/net/session.cc	src/net/config.h
+src/net/session.cc	src/net/session.hh
+src/net/session.cc	src/util/string.h
+src/net/session.hh	src/net/config.h
+src/net/session.hh	src/store/store.h
+src/store/store.c	include/app/log.h
+src/store/store.c	src/store/store.h
+src/store/store.c	src/util/strbuf.h
+src/store/store.h	include/app/config.h
+src/store/store_mem.c	src/store/store.h
+src/store/store_mem.c	src/util/strbuf.h
+src/util/memory.hpp	src/util/strbuf.h

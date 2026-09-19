@@ -3,19 +3,59 @@
 # a missing line is an edge the extractor stopped finding, an extra line
 # is an edge it invented. Both are regressions.
 #
+# The fixture and an independent list of the edges it should produce were
+# written separately, then reconciled. Every disagreement was read back
+# against the source; the ones that were the extractor being wrong are
+# fixed, and this file is what survived.
+#
 # Regenerate deliberately, never reflexively - the point of the file is
 # that it does not move when the extractor changes.
+scripts/build.mjs	package.json
+scripts/build.mjs	src/esm/wrapper.mts
 scripts/build.mjs	src/lib/constants.ts
+scripts/build.mjs	src/lib/dual.js
+src/app.tsx	src/app.css
 src/app.tsx	src/components/Button.tsx
+src/app.tsx	src/config/settings.ts
+src/app.tsx	src/features/detail/model.ts
 src/app.tsx	src/hooks/useData.ts
 src/app.tsx	src/lib/format.ts
 src/app.tsx	src/lib/index.ts
+src/app.tsx	src/widgets/Card.jsx
 src/components/Button.tsx	src/lib/constants.ts
 src/components/Button.tsx	src/lib/format.ts
+src/components/Button.tsx	src/widgets/Card.jsx
+src/esm/native.cts	src/legacy/config.cjs
+src/esm/native.cts	src/legacy/loader.cjs
+src/esm/wrapper.mts	src/esm/native.cts
+src/esm/wrapper.mts	src/lib/format.ts
+src/features/detail/model.ts	src/features/detail/view.tsx
+src/features/detail/model.ts	src/lib/format.ts
+src/features/detail/view.tsx	src/components/Button.tsx
+src/features/detail/view.tsx	src/features/detail/model.ts
+src/features/detail/view.tsx	src/lib/dual.ts
+src/features/detail/view.tsx	src/types/models.d.ts
+src/hooks/useData.ts	src/hooks/constants.ts
+src/hooks/useData.ts	src/lib/constants.ts
 src/hooks/useData.ts	src/lib/index.ts
+src/hooks/useData.ts	src/types/models.d.ts
 src/index.ts	src/app.tsx
+src/index.ts	src/features/detail/view.tsx
 src/index.ts	src/lib/constants.ts
 src/index.ts	src/lib/index.ts
+src/index.ts	src/polyfill.ts
+src/index.ts	src/types/globals.d.ts
+src/index.ts	src/types/models.d.ts
+src/index.ts	src/util.ts
+src/index.ts	src/util/index.ts
 src/legacy/loader.cjs	src/legacy/config.cjs
+src/legacy/loader.cjs	src/lib/dual.js
 src/lib/index.ts	src/lib/constants.ts
+src/lib/index.ts	src/lib/dual.ts
 src/lib/index.ts	src/lib/format.ts
+src/lib/index.ts	src/lib/legacyish.js
+src/types/models.d.ts	src/lib/format.ts
+src/util.ts	src/lib/format.ts
+src/util/index.ts	src/vendor/clsx.ts
+src/widgets/Card.jsx	src/lib/format.ts
+src/widgets/Card.jsx	src/vendor/clsx.ts

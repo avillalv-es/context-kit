@@ -8,7 +8,8 @@
     "baseUrl": ".",
     "paths": {
       "@lib": ["src/lib/index.ts"],
-      "@app/*": ["src/*"]
+      "@app/*": ["src/*"],
+      "@shared/*": ["src/missing/*", "src/lib/*"]
     }
   },
   "include": ["src", "scripts"]

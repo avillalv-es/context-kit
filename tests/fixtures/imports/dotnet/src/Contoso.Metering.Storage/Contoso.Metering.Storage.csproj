@@ -1,0 +1,60 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Include FIRST, a second attribute after it: captured cleanly. -->
+    <ProjectReference Include="..\Contoso.Metering.Abstractions\Contoso.Metering.Abstractions.csproj" Condition="'$(TargetFramework)' == 'net8.0'" />
+
+    <!-- Include SECOND. Same element shape, an equally real dependency. The
+         capture step strips to the FIRST quote inside the match, and that
+         quote now belongs to Private="false", so the path comes out garbage
+         and a genuine edge dies without anyone noticing. -->
+    <ProjectReference Private="false" Include="..\Contoso.Metering.Telemetry\Contoso.Metering.Telemetry.csproj" />
+
+    <!-- Two elements on ONE line: the pattern is applied once per line and
+         [^>]* cannot cross the '/>' of the first, so the SECOND edge is lost
+         and is not even written to the unresolved log. -->
+    <ProjectReference Include="..\Contoso.Metering.Core\Contoso.Metering.Core.csproj" /><ProjectReference Include="..\Contoso.Metering.Telemetry\Contoso.Metering.Telemetry.csproj" />
+
+    <!-- Single-quoted attribute value. Legal MSBuild; the pattern demands
+         double quotes, so this real dependency is silently invisible too.
+         Three separate references to Telemetry, and not one edge. -->
+    <ProjectReference Include='..\Contoso.Metering.Telemetry\Contoso.Metering.Telemetry.csproj' />
+
+    <!-- An MSBuild property in the path: captured verbatim, resolves nowhere. -->
+    <ProjectReference Include="$(SolutionDir)src\Contoso.Metering.Core\Contoso.Metering.Core.csproj" />
+
+    <!-- A glob. MSBuild expands it at build time; the extractor cannot. -->
+    <ProjectReference Include="..\Contoso.Metering.Plugins\**\*.csproj" />
+
+    <!-- Climbs clean out of the fixture root. Rejected, never clamped. -->
+    <ProjectReference Include="..\..\..\..\Elsewhere\Elsewhere.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- A real MSBuild item whose element NAME merely starts with the word.
+         The pattern has no element boundary, so it matches and tries to
+         resolve the target name 'Build' as if it were a path. -->
+    <ProjectReferenceTargets Include="Build" OuterBuildTargets="Build" />
+
+    <!-- NOT a reference to a project: the word occurs only in a Label, and no
+         '>' sits between it and Include=. The pattern matches. This drops
+         only because the capture step is broken in the same way as above. -->
+    <Compile Label="ProjectReference" Include="Extra\Helper.cs" />
+
+    <!-- Same two words, but a '>' separates them. [^>]* refuses to cross it. -->
+    <!-- ProjectReference --> <Compile Include="Options.cs" />
+
+    <!-- Include= on its own must never be matched. -->
+    <Compile Include="Telemetry.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Azure.Storage.Blobs" Version="12.19.1" />
+  </ItemGroup>
+
+</Project>
