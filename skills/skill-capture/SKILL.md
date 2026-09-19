@@ -64,12 +64,22 @@ than one that never fires.
 
 ## 5 — Keep the body short
 
-Cap it around 100 lines. If the procedure needs heavy reference material —
-a schema, a long table, an API surface — put that in `knowledge/<topic>.md` and
-link to it. A skill that inlines its own reference recreates the CLAUDE.md
-problem one level down: it all loads the moment the skill fires.
+Cap it around 100 lines. Write the steps, the failure modes, and the
+verification. Not the rationale.
 
-Write the steps, the failure modes, and the verification. Not the rationale.
+If the procedure needs heavy reference material — a schema, a long table, an
+API surface — it goes in a sidecar, not in the body. A skill that inlines its
+own reference recreates the CLAUDE.md problem one level down: it all loads
+the moment the skill fires, every time, including the invocations that only
+need step one.
+
+- The project will want it too → `knowledge/<topic>.md`.
+- Only this procedure will → `.claude/skills/<name>/references/<topic>.md`,
+  beside the `SKILL.md`, so it travels with the skill.
+
+Link it with a condition attached — "read `references/flags.md` only when the
+caller passes a flag not listed above" — because a pointer with no condition
+gets followed every time, which is the cost you were avoiding.
 
 ## 6 — Write the files
 

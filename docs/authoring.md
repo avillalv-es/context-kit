@@ -115,9 +115,34 @@ sentence worth its length.
 travels with the repo that needs it.
 
 **Cap the body around 100 lines.** If the procedure needs heavy reference —
-a schema, a long table, an API surface — that goes in `knowledge/<topic>.md`
-and gets linked. A skill that inlines its own reference recreates the tier-1
-problem one level down: it all loads the moment the skill fires.
+a schema, a long table, an API surface — that goes in a sidecar and gets
+linked. A skill that inlines its own reference recreates the tier-1 problem
+one level down: it all loads the moment the skill fires, in full, every time,
+even for the nine invocations out of ten that only need the first three steps.
+
+Two places to put the sidecar, and the choice is about who else needs it:
+
+| Where | When |
+|---|---|
+| `knowledge/<topic>.md` | the reference is about the **project**, and something other than this skill will want it |
+| `.claude/skills/<name>/references/<topic>.md` | the reference is about **this procedure only**, and travels with it |
+
+The second is the one people forget. A skill directory can hold more than
+`SKILL.md`. Keep `SKILL.md` to the decision path — when to fire, the steps,
+the failure modes, the verification — and point at
+`references/<topic>.md` for the parts that are looked up rather than read:
+
+```markdown
+The full flag table is in `references/flags.md`. Read it only when the
+caller passes something not covered above.
+```
+
+Say *when to read it*, not just that it exists. A pointer with no condition
+gets followed every time, which is the cost you were avoiding.
+
+This is the three-tier model applied inside a skill, and it is worth doing for
+the same reason: what loads on every invocation should be only what every
+invocation needs.
 
 ---
 

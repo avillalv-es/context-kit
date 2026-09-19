@@ -11,12 +11,17 @@ context-kit
   Layout
     /context-init            set up or rebalance the three-tier layout
     /context-init bootstrap  scaffold + stamp the marker only, no survey
+    /context-graph           draw the layout; also `serve`, `vault`, `open`
     /context                 (built-in) the real context-window number
 
   Skills
     /skill-capture           turn a repeatable procedure into a project skill
     /lean-review [--repo]    what can be deleted; diff by default
     /shortcut-ledger         every deliberate shortcut marked in this repo
+
+  Findings
+    /finding                 record what you just settled, or a dead end
+    /finding reflect         roll every entry into findings/LESSONS.md
 
   Lean execution
     /lean lite               build it, then name the leaner option in one line
@@ -37,6 +42,7 @@ context-kit
 
   Environment
     CONTEXT_KIT_OFF=1         disable every context-kit hook
-    CONTEXT_KIT_NO_SIGNALS=1  disable repeat detection only
+    CONTEXT_KIT_NO_SIGNALS=1  disable repeat detection and the activity ledger
+    CONTEXT_KIT_NO_ACTIVITY=1 disable the activity ledger only
     CONTEXT_KIT_LEVEL=<lvl>   override the lean level for one session
 ```

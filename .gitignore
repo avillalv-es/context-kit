@@ -2,3 +2,7 @@
 # to declare exclusions when it grows.
 .DS_Store
 Thumbs.db
+
+# /context-graph output. Derived, rebuilt on every run, and committing it
+# turns every session into a diff.
+.claude/context-graph/

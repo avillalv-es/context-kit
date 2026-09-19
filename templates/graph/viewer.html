@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Context Graph</title>
+<!--
+  Written by context-kit. Self-contained on purpose: the data is inlined
+  below, there is no script or font fetched from anywhere, and the page works
+  over file:// with the network off. A viewer that needs a CDN is a viewer
+  that does not open on an air-gapped machine.
+-->
+<style>
+  :root {
+    --bg: #ffffff; --panel: #f6f7f9; --line: #dfe3e8; --fg: #1c2024;
+    --muted: #6b7280; --accent: #3b6fb5; --warn: #b4530a;
+    --k-tier1: #d1495b; --k-rule: #3b6fb5; --k-knowledge: #2a9d8f;
+    --k-skill: #8256c4; --k-command: #0d7a8c; --k-agent: #b4530a;
+    --k-finding: #7a6f00; --k-path: #8c92a0; --k-file: #a0a6b0;
+    --k-doc: #5c6370; --k-session: #c2185b; --k-hook: #444c56;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1115; --panel: #161a21; --line: #272d37; --fg: #e6e9ee;
+      --muted: #949cab; --accent: #6ea8f0; --warn: #f0a15c;
+      --k-tier1: #f4717f; --k-rule: #6ea8f0; --k-knowledge: #4ecdc4;
+      --k-skill: #b58bf0; --k-command: #3fc4d8; --k-agent: #f0a15c;
+      --k-finding: #d4c84a; --k-path: #7b828f; --k-file: #6a7280;
+      --k-doc: #8b93a1; --k-session: #f06292; --k-hook: #8b96a5;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1115; --panel: #161a21; --line: #272d37; --fg: #e6e9ee;
+    --muted: #949cab; --accent: #6ea8f0; --warn: #f0a15c;
+    --k-tier1: #f4717f; --k-rule: #6ea8f0; --k-knowledge: #4ecdc4;
+    --k-skill: #b58bf0; --k-command: #3fc4d8; --k-agent: #f0a15c;
+    --k-finding: #d4c84a; --k-path: #7b828f; --k-file: #6a7280;
+    --k-doc: #8b93a1; --k-session: #f06292; --k-hook: #8b96a5;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font: 14px/1.5 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex; overflow: hidden;
+  }
+  #stage { flex: 1; position: relative; min-width: 0; overflow: hidden; }
+  canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+  canvas.dragging { cursor: grabbing; }
+  #side {
+    width: 320px; flex: none; background: var(--panel);
+    border-left: 1px solid var(--line); display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .sec { padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .sec h2 {
+    font-size: 11px; font-weight: 600; letter-spacing: .07em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 8px;
+  }
+  #hdr { display: flex; align-items: baseline; gap: 8px; }
+  #hdr b { font-size: 15px; }
+  #hdr span { font-size: 12px; color: var(--muted); }
+  input[type=search] {
+    width: 100%; padding: 7px 10px; border: 1px solid var(--line);
+    border-radius: 6px; background: var(--bg); color: var(--fg);
+    font: inherit; font-size: 13px;
+  }
+  input[type=search]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  #legend { display: flex; flex-direction: column; gap: 2px; }
+  .lg {
+    display: flex; align-items: center; gap: 8px; padding: 3px 6px;
+    border-radius: 5px; cursor: pointer; font-size: 13px; user-select: none;
+  }
+  .lg:hover { background: var(--line); }
+  .lg.off { opacity: .4; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .lg .n { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lg .c { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  #scroll { flex: 1; overflow-y: auto; }
+  #inspect .row { display: flex; gap: 8px; font-size: 13px; margin-bottom: 3px; }
+  #inspect .row b { color: var(--muted); font-weight: 500; min-width: 66px; flex: none; }
+  #inspect .row span { word-break: break-word; }
+  .issue {
+    background: color-mix(in srgb, var(--warn) 12%, transparent);
+    border-left: 3px solid var(--warn); padding: 7px 10px;
+    border-radius: 0 5px 5px 0; font-size: 12.5px; margin-bottom: 6px;
+    cursor: pointer;
+  }
+  .issue:hover { background: color-mix(in srgb, var(--warn) 20%, transparent); }
+  .issue b { display: block; font-weight: 600; margin-bottom: 1px; }
+  .nbr {
+    display: flex; gap: 6px; align-items: baseline; padding: 2px 6px;
+    border-radius: 4px; cursor: pointer; font-size: 12.5px;
+  }
+  .nbr:hover { background: var(--line); }
+  .nbr em { color: var(--muted); font-style: normal; font-size: 11.5px; flex: none; }
+  .nbr span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .muted { color: var(--muted); font-size: 12.5px; }
+  #ctl { display: flex; gap: 6px; padding: 8px 16px; border-bottom: 1px solid var(--line); }
+  button {
+    font: inherit; font-size: 12px; padding: 4px 9px; border-radius: 5px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--fg);
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  #hint {
+    position: absolute; left: 12px; bottom: 10px; font-size: 11.5px;
+    color: var(--muted); pointer-events: none;
+  }
+  #empty {
+    position: absolute; inset: 0; display: none; place-items: center;
+    text-align: center; padding: 24px; color: var(--muted);
+  }
+  @media (max-width: 760px) {
+    body { flex-direction: column; }
+    #stage { height: 52vh; flex: none; }
+    #side { width: 100%; border-left: 0; border-top: 1px solid var(--line); flex: 1; }
+    /* One long unwrapped line is enough to give the whole page a horizontal
+       scrollbar on a phone, and the gestures it describes are the obvious
+       ones anyway. */
+    #hint { display: none; }
+  }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="cv"></canvas>
+  <div id="hint">drag to pan &middot; scroll to zoom &middot; drag a node to pin it &middot; double-click to unpin</div>
+  <div id="empty"></div>
+</div>
+<aside id="side">
+  <div class="sec" id="hdr-wrap">
+    <div id="hdr"><b>Context graph</b><span id="counts"></span></div>
+    <div class="muted" id="stamp" style="margin-top:4px"></div>
+  </div>
+  <div id="ctl">
+    <button id="fit">Fit</button>
+    <button id="restart">Re-layout</button>
+    <button id="theme">Theme</button>
+  </div>
+  <div class="sec"><input type="search" id="q" placeholder="Search nodes&hellip;" autocomplete="off"></div>
+  <div id="scroll">
+    <div class="sec"><h2>Selected</h2><div id="inspect"><p class="muted">Click a node.</p></div></div>
+    <div class="sec"><h2 id="ih">Findings</h2><div id="issues"></div></div>
+    <div class="sec"><h2>Kinds</h2><div id="legend"></div></div>
+  </div>
+</aside>
+
+<script id="graph-data" type="application/json">
+__CONTEXT_GRAPH_DATA__
+</script>
+
+<script>
+"use strict";
+(function () {
+  var raw = document.getElementById("graph-data").textContent;
+  var G;
+  try { G = JSON.parse(raw); } catch (e) { G = null; }
+  if (!G || !G.nodes || !G.nodes.length) {
+    document.getElementById("empty").style.display = "grid";
+    document.getElementById("empty").textContent =
+      "No graph data. Run: context-graph.sh build";
+    return;
+  }
+
+  var KIND_ORDER = ["tier1", "rule", "path", "knowledge", "skill", "command",
+                    "agent", "finding", "doc", "file", "session", "hook"];
+  var KIND_LABEL = {
+    tier1: "tier 1 (always loaded)", rule: "tier 2 rule", path: "path it claims",
+    knowledge: "tier 3 knowledge", skill: "tier 3 skill", command: "command",
+    agent: "agent", finding: "finding", doc: "cited doc", file: "touched file",
+    session: "session", hook: "hook"
+  };
+  function kindColor(k) {
+    return getComputedStyle(document.documentElement)
+      .getPropertyValue("--k-" + k).trim() || "#888";
+  }
+
+  var nodes = G.nodes.map(function (n) {
+    return {
+      id: n.id, label: n.label, kind: n.kind, tier: n.tier, path: n.path,
+      lines: n.lines, bytes: n.bytes, matches: n.matches,
+      description: n.description, issue: n.issue, degree: n.degree || 0,
+      x: 0, y: 0, vx: 0, vy: 0, pinned: false, hidden: false, dim: false
+    };
+  });
+  var byId = {};
+  nodes.forEach(function (n, i) { byId[n.id] = i; });
+  var links = [];
+  G.edges.forEach(function (e) {
+    var a = byId[e.source], b = byId[e.target];
+    if (a === undefined || b === undefined || a === b) return;
+    links.push({ s: a, t: b, rel: e.relation, conf: e.confidence, w: e.weight || 1 });
+  });
+
+  // Deterministic start positions: a ring by kind, so the same graph opens
+  // looking the same twice running. Random seeding makes every rebuild look
+  // like the layout changed when only the seed did.
+  var kindIdx = {};
+  KIND_ORDER.forEach(function (k, i) { kindIdx[k] = i; });
+  nodes.forEach(function (n, i) {
+    var ring = (kindIdx[n.kind] === undefined ? KIND_ORDER.length : kindIdx[n.kind]);
+    var a = (i * 2.399963) % (Math.PI * 2);
+    var r = 60 + ring * 46;
+    n.x = Math.cos(a) * r;
+    n.y = Math.sin(a) * r;
+  });
+
+  var cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+  var view = { x: 0, y: 0, k: 1 }, dpr = 1, W = 0, H = 0;
+  var selected = null, hover = null, drag = null, panning = null;
+  var hiddenKinds = {}, query = "";
+
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = cv.clientWidth; H = cv.clientHeight;
+    cv.width = Math.max(1, Math.round(W * dpr));
+    cv.height = Math.max(1, Math.round(H * dpr));
+  }
+  window.addEventListener("resize", function () { resize(); draw(); });
+
+  function radius(n) {
+    return 4 + Math.min(11, Math.sqrt(n.degree) * 2.4) + (n.kind === "tier1" ? 3 : 0);
+  }
+
+  // --- force layout -------------------------------------------------------
+  // Plain repulsion + spring + centring. O(n^2), which is free at the size a
+  // context layout actually reaches; a quadtree here would be rung-1 work on
+  // a problem nobody has.
+  var alpha = 1, ticking = true;
+  function step() {
+    var i, j, a, b, dx, dy, d2, d, f;
+    for (i = 0; i < nodes.length; i++) {
+      a = nodes[i];
+      if (a.hidden) continue;
+      for (j = i + 1; j < nodes.length; j++) {
+        b = nodes[j];
+        if (b.hidden) continue;
+        dx = b.x - a.x; dy = b.y - a.y;
+        d2 = dx * dx + dy * dy;
+        if (d2 < 0.01) { dx = (i % 7) - 3; dy = (j % 7) - 3; d2 = dx * dx + dy * dy + 0.01; }
+        if (d2 > 360000) continue;
+        f = 2600 / d2;
+        d = Math.sqrt(d2);
+        a.vx -= (dx / d) * f; a.vy -= (dy / d) * f;
+        b.vx += (dx / d) * f; b.vy += (dy / d) * f;
+      }
+    }
+    for (i = 0; i < links.length; i++) {
+      a = nodes[links[i].s]; b = nodes[links[i].t];
+      if (a.hidden || b.hidden) continue;
+      dx = b.x - a.x; dy = b.y - a.y;
+      d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+      f = (d - 92) * 0.016;
+      a.vx += (dx / d) * f; a.vy += (dy / d) * f;
+      b.vx -= (dx / d) * f; b.vy -= (dy / d) * f;
+    }
+    for (i = 0; i < nodes.length; i++) {
+      a = nodes[i];
+      if (a.hidden) continue;
+      a.vx -= a.x * 0.0022; a.vy -= a.y * 0.0022;
+      if (a.pinned || a === drag) { a.vx = 0; a.vy = 0; continue; }
+      a.vx *= 0.82; a.vy *= 0.82;
+      a.x += a.vx * alpha; a.y += a.vy * alpha;
+    }
+    alpha *= 0.994;
+    if (alpha < 0.02) ticking = false;
+  }
+
+  function toScreen(n) {
+    return { x: (n.x + view.x) * view.k + W / 2, y: (n.y + view.y) * view.k + H / 2 };
+  }
+  function fromScreen(px, py) {
+    return { x: (px - W / 2) / view.k - view.x, y: (py - H / 2) / view.k - view.y };
+  }
+
+  var REL_DASH = { mentions: [4, 3], cites: [2, 3] };
+  function edgeStyle(l) {
+    if (l.conf === "OBSERVED") return { dash: [1, 4], alpha: 0.75 };
+    if (l.conf === "INFERRED") return { dash: [4, 3], alpha: 0.5 };
+    return { dash: REL_DASH[l.rel] || [], alpha: 0.6 };
+  }
+
+  function visible(n) { return !n.hidden; }
+
+  function draw() {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    var focus = selected !== null ? nodes[selected] : null;
+    var near = {};
+    if (focus) {
+      near[byId[focus.id]] = true;
+      links.forEach(function (l) {
+        if (nodes[l.s] === focus) near[l.t] = true;
+        if (nodes[l.t] === focus) near[l.s] = true;
+      });
+    }
+
+    ctx.lineCap = "round";
+    links.forEach(function (l) {
+      var a = nodes[l.s], b = nodes[l.t];
+      if (!visible(a) || !visible(b)) return;
+      var on = !focus || (a === focus || b === focus);
+      var st = edgeStyle(l);
+      var pa = toScreen(a), pb = toScreen(b);
+      ctx.save();
+      ctx.globalAlpha = on ? st.alpha : 0.08;
+      ctx.strokeStyle = l.conf === "OBSERVED" ? kindColor("session") : getComputedStyle(document.documentElement).getPropertyValue("--muted").trim();
+      ctx.lineWidth = Math.min(3, 0.8 + Math.log(l.w + 1) * 0.6) * (on ? 1.4 : 1);
+      ctx.setLineDash(st.dash);
+      ctx.beginPath(); ctx.moveTo(pa.x, pa.y); ctx.lineTo(pb.x, pb.y); ctx.stroke();
+      ctx.restore();
+    });
+
+    nodes.forEach(function (n, i) {
+      if (!visible(n)) return;
+      var p = toScreen(n), r = radius(n) * Math.max(0.55, Math.min(1.6, view.k));
+      var on = !focus || near[i];
+      var match = query && n.label.toLowerCase().indexOf(query) === -1 &&
+                  (n.path || "").toLowerCase().indexOf(query) === -1;
+      ctx.save();
+      ctx.globalAlpha = match ? 0.12 : (on ? 1 : 0.18);
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = kindColor(n.kind);
+      ctx.fill();
+      if (n.issue) {
+        ctx.lineWidth = 2.5;
+        ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue("--warn").trim();
+        ctx.stroke();
+      }
+      if (n === focus || n === hover) {
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue("--fg").trim();
+        ctx.stroke();
+      }
+      if (view.k > 0.55 || n.degree > 3 || n === focus || n === hover) {
+        ctx.globalAlpha = match ? 0.15 : (on ? 0.95 : 0.2);
+        ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--fg").trim();
+        ctx.font = (n.kind === "tier1" ? "600 " : "") + "11px ui-sans-serif, sans-serif";
+        ctx.textAlign = "center"; ctx.textBaseline = "top";
+        ctx.fillText(n.label.length > 26 ? n.label.slice(0, 25) + "…" : n.label,
+                     p.x, p.y + r + 3);
+      }
+      ctx.restore();
+    });
+  }
+
+  function loop() {
+    if (ticking) step();
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  function fit() {
+    var xs = [], ys = [];
+    nodes.forEach(function (n) { if (visible(n)) { xs.push(n.x); ys.push(n.y); } });
+    if (!xs.length) return;
+    var x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
+    var y0 = Math.min.apply(null, ys), y1 = Math.max.apply(null, ys);
+    var w = Math.max(1, x1 - x0), h = Math.max(1, y1 - y0);
+    view.k = Math.max(0.15, Math.min(2.2, Math.min(W / (w + 140), H / (h + 140))));
+    view.x = -(x0 + x1) / 2; view.y = -(y0 + y1) / 2;
+  }
+
+  function pick(px, py) {
+    for (var i = nodes.length - 1; i >= 0; i--) {
+      var n = nodes[i];
+      if (!visible(n)) continue;
+      var p = toScreen(n), r = radius(n) * Math.max(0.55, Math.min(1.6, view.k)) + 4;
+      if ((px - p.x) * (px - p.x) + (py - p.y) * (py - p.y) <= r * r) return i;
+    }
+    return null;
+  }
+
+  cv.addEventListener("mousedown", function (e) {
+    var i = pick(e.offsetX, e.offsetY);
+    if (i !== null) { drag = nodes[i]; select(i); }
+    else { panning = { x: e.offsetX, y: e.offsetY, vx: view.x, vy: view.y }; }
+    cv.classList.add("dragging");
+  });
+  window.addEventListener("mousemove", function (e) {
+    var r = cv.getBoundingClientRect();
+    var ox = e.clientX - r.left, oy = e.clientY - r.top;
+    if (drag) {
+      var w = fromScreen(ox, oy);
+      drag.x = w.x; drag.y = w.y; drag.pinned = true;
+      alpha = Math.max(alpha, 0.25); ticking = true;
+    } else if (panning) {
+      view.x = panning.vx + (ox - panning.x) / view.k;
+      view.y = panning.vy + (oy - panning.y) / view.k;
+    } else if (ox >= 0 && oy >= 0 && ox <= W && oy <= H) {
+      var i = pick(ox, oy);
+      hover = i === null ? null : nodes[i];
+      cv.title = hover ? (hover.path || hover.label) : "";
+    }
+  });
+  window.addEventListener("mouseup", function () {
+    drag = null; panning = null; cv.classList.remove("dragging");
+  });
+  cv.addEventListener("dblclick", function (e) {
+    var i = pick(e.offsetX, e.offsetY);
+    if (i !== null) { nodes[i].pinned = false; alpha = Math.max(alpha, 0.3); ticking = true; }
+  });
+  cv.addEventListener("wheel", function (e) {
+    e.preventDefault();
+    var before = fromScreen(e.offsetX, e.offsetY);
+    view.k = Math.max(0.1, Math.min(4, view.k * (e.deltaY < 0 ? 1.12 : 0.89)));
+    var after = fromScreen(e.offsetX, e.offsetY);
+    view.x += after.x - before.x; view.y += after.y - before.y;
+  }, { passive: false });
+
+  // --- sidebar ------------------------------------------------------------
+  var elInspect = document.getElementById("inspect");
+  function esc(s) {
+    return String(s === undefined || s === null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function select(i) {
+    selected = i;
+    var n = nodes[i];
+    var out = [];
+    out.push('<div class="row"><b>Name</b><span>' + esc(n.label) + "</span></div>");
+    out.push('<div class="row"><b>Kind</b><span>' + esc(KIND_LABEL[n.kind] || n.kind) + "</span></div>");
+    if (n.path) out.push('<div class="row"><b>Path</b><span>' + esc(n.path) + "</span></div>");
+    if (n.tier) out.push('<div class="row"><b>Tier</b><span>' + n.tier + "</span></div>");
+    if (n.lines) out.push('<div class="row"><b>Lines</b><span>' + n.lines + "</span></div>");
+    if (n.matches !== undefined) out.push('<div class="row"><b>Matches</b><span>' + n.matches + " file" + (n.matches === 1 ? "" : "s") + "</span></div>");
+    if (n.description) out.push('<div class="row"><b>Fires on</b><span>' + esc(n.description) + "</span></div>");
+    if (n.issue) out.push('<div class="issue" style="margin-top:8px">' + esc(n.issue) + "</div>");
+    var nb = [];
+    links.forEach(function (l) {
+      if (nodes[l.s] === n) nb.push([l.rel + " →", l.t]);
+      else if (nodes[l.t] === n) nb.push(["← " + l.rel, l.s]);
+    });
+    if (nb.length) {
+      out.push('<h2 style="margin:10px 0 4px">Connections (' + nb.length + ")</h2>");
+      nb.sort(function (a, b) { return a[0] < b[0] ? -1 : 1; });
+      nb.forEach(function (p) {
+        out.push('<div class="nbr" data-i="' + p[1] + '"><em>' + esc(p[0]) +
+                 '</em><span>' + esc(nodes[p[1]].label) + "</span></div>");
+      });
+    } else {
+      out.push('<p class="muted" style="margin-top:8px">Nothing connects to this. ' +
+               "Tier 3 is reached by lookup, so an unconnected node is one nothing will find.</p>");
+    }
+    elInspect.innerHTML = out.join("");
+    Array.prototype.forEach.call(elInspect.querySelectorAll(".nbr"), function (el) {
+      el.addEventListener("click", function () { select(+el.dataset.i); });
+    });
+  }
+
+  var counts = {};
+  nodes.forEach(function (n) { counts[n.kind] = (counts[n.kind] || 0) + 1; });
+  var legend = document.getElementById("legend");
+  KIND_ORDER.concat(Object.keys(counts).filter(function (k) {
+    return KIND_ORDER.indexOf(k) === -1;
+  })).forEach(function (k) {
+    if (!counts[k]) return;
+    var d = document.createElement("div");
+    d.className = "lg";
+    d.innerHTML = '<span class="dot" style="background:' + kindColor(k) + '"></span>' +
+                  '<span class="n">' + esc(KIND_LABEL[k] || k) + "</span>" +
+                  '<span class="c">' + counts[k] + "</span>";
+    d.addEventListener("click", function () {
+      hiddenKinds[k] = !hiddenKinds[k];
+      d.classList.toggle("off", !!hiddenKinds[k]);
+      nodes.forEach(function (n) { n.hidden = !!hiddenKinds[n.kind]; });
+      alpha = Math.max(alpha, 0.3); ticking = true;
+    });
+    legend.appendChild(d);
+  });
+
+  var elIssues = document.getElementById("issues");
+  if (G.issues && G.issues.length) {
+    document.getElementById("ih").textContent = "Findings (" + G.issues.length + ")";
+    G.issues.forEach(function (it) {
+      var i = byId[it.node];
+      var d = document.createElement("div");
+      d.className = "issue";
+      d.innerHTML = "<b>" + esc(i === undefined ? it.node : nodes[i].label) + "</b>" + esc(it.text);
+      if (i !== undefined) d.addEventListener("click", function () { select(i); });
+      elIssues.appendChild(d);
+    });
+  } else {
+    elIssues.innerHTML = '<p class="muted">Nothing to flag: every rule matches ' +
+      "files, every tier-3 file is reachable, every skill fires.</p>";
+  }
+
+  document.getElementById("counts").textContent =
+    G.stats.nodes + " nodes · " + G.stats.edges + " edges";
+  document.getElementById("stamp").textContent =
+    "built " + (G.generated || "?") + (G.stats.tier1_lines ? " · " + G.stats.tier1_lines + " lines in tier 1" : "");
+
+  document.getElementById("q").addEventListener("input", function (e) {
+    query = e.target.value.trim().toLowerCase();
+  });
+  document.getElementById("fit").addEventListener("click", function () { fit(); });
+  document.getElementById("restart").addEventListener("click", function () {
+    nodes.forEach(function (n) { n.pinned = false; });
+    alpha = 1; ticking = true;
+  });
+  document.getElementById("theme").addEventListener("click", function () {
+    var cur = document.documentElement.getAttribute("data-theme");
+    var dark = cur ? cur === "dark"
+      : window.matchMedia("(prefers-color-scheme: dark)").matches;
+    document.documentElement.setAttribute("data-theme", dark ? "light" : "dark");
+  });
+  window.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") { selected = null; elInspect.innerHTML = '<p class="muted">Click a node.</p>'; }
+  });
+
+  resize();
+  // Settle before fitting. Fitting a still-expanding layout frames the graph
+  // as it was mid-flight, and on a narrow viewport the nodes have left the
+  // canvas by the time anyone looks.
+  for (var s = 0; s < 1200 && ticking; s++) step();
+  fit();
+  loop();
+})();
+</script>
+</body>
+</html>

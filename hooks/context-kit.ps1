@@ -1,6 +1,6 @@
 # context-kit hook entrypoint. PowerShell twin of context-kit.sh.
 #
-# Usage: context-kit.ps1 session|subagent|mode|signal
+# Usage: context-kit.ps1 session|subagent|mode|signal|event
 #
 # Claude Code uses Git Bash on Windows when it is installed and falls back to
 # PowerShell otherwise. Both scripts are registered for every event; each is
@@ -8,7 +8,8 @@
 # produces output.
 #
 # Fails open, always. Every error path exits 0 with no output.
-# Patterns adapted from ponytail (MIT, Dietrich Gebert). See NOTICE.
+# Patterns adapted from ponytail (MIT, Dietrich Gebert) and graphify
+# (Apache-2.0, Graphify Labs). See NOTICE.
 
 $ErrorActionPreference = 'SilentlyContinue'
 
@@ -53,11 +54,23 @@ function Write-HookOutput([string]$EventName, [string]$Text) {
   $payload | ConvertTo-Json -Depth 5 -Compress
 }
 
-function Get-JsonField([string]$Name) {
+# Stdin can only be drained once, and the event handler needs several fields
+# from the same payload, so the parse is cached rather than repeated.
+$script:HookInput = $null
+$script:HookInputRead = $false
+function Get-HookInput {
+  if ($script:HookInputRead) { return $script:HookInput }
+  $script:HookInputRead = $true
   $raw = [Console]::In.ReadToEnd()
-  if (-not $raw) { return '' }
+  if (-not $raw) { return $null }
+  try { $script:HookInput = $raw | ConvertFrom-Json } catch { $script:HookInput = $null }
+  return $script:HookInput
+}
+
+function Get-JsonField([string]$Name) {
+  $obj = Get-HookInput
+  if (-not $obj) { return '' }
   try {
-    $obj = $raw | ConvertFrom-Json
     if ($Name -eq 'command') { return [string]$obj.tool_input.command }
     return [string]$obj.$Name
   } catch { return '' }
@@ -214,13 +227,74 @@ function Invoke-Mode {
   } | ConvertTo-Json -Depth 5 -Compress
 }
 
+# Reduce a shell command to the procedure it actually runs. Twin of the awk
+# `signature` in context-kit.sh; the two must agree or the same procedure gets
+# two signatures across shells and never reaches the repeat threshold.
+#
+# Drop heredoc bodies and quoted spans, keep the first command segment, skip
+# VAR=value prefixes and wrapper words with their own flags, then take the exe
+# plus a bare-word subcommand. `pytest -k auth`, `sudo pytest -q` and
+# `env CI=1 pytest` all collapse onto `pytest`; `npm run` stays distinct from
+# `npm ci`. Adapted from graphify's _bash_invokes_search.
+function Get-CommandSignature([string]$Cmd) {
+  if (-not $Cmd) { return '' }
+  $wrappers = @('sudo','doas','command','exec','nohup','time','nice','ionice',
+                'env','xargs','timeout','stdbuf')
+  $text = $Cmd
+
+  # Heredoc bodies never describe what ran.
+  if ($text -match '<<-?\s*[''"]?([A-Za-z_][A-Za-z0-9_]*)[''"]?') {
+    $tag = $Matches[1]
+    $lines = $text -split "`n"
+    $kept = New-Object System.Collections.Generic.List[string]
+    $inBody = $false
+    foreach ($line in $lines) {
+      if ($inBody) { if ($line.Trim() -eq $tag) { $inBody = $false }; continue }
+      $kept.Add($line)
+      if ($line -match '<<-?\s*[''"]?([A-Za-z_][A-Za-z0-9_]*)[''"]?') { $tag = $Matches[1]; $inBody = $true }
+    }
+    $text = ($kept -join ' ')
+  }
+
+  # Anything quoted is an argument, never the executable.
+  $text = $text -replace "'[^']*'", ' '
+  $text = $text -replace '"[^"]*"', ' '
+  $text = ($text -split '[|;&]')[0].Trim()
+  if (-not $text) { return '' }
+
+  $tokens = @($text -split '\s+' | Where-Object { $_ })
+  $i = 0
+  while ($i -lt $tokens.Count) {
+    $tok = $tokens[$i]
+    if ($tok -match '^[A-Za-z_][A-Za-z0-9_]*=') { $i++; continue }
+    $bare = ($tok -replace '.*[\\/]', '') -replace '\.exe$', ''
+    if ($wrappers -contains $bare.ToLower()) {
+      $i++
+      while ($i -lt $tokens.Count -and $tokens[$i].StartsWith('-')) { $i++ }
+      continue
+    }
+    break
+  }
+  if ($i -ge $tokens.Count) { return '' }
+
+  $exe = ((($tokens[$i]) -replace '.*[\\/]', '') -replace '\.exe$', '').ToLower()
+  $arg = ''
+  if ($i + 1 -lt $tokens.Count) {
+    $nxt = $tokens[$i + 1]
+    # A subcommand, and only a subcommand: a flag value or a path would give
+    # every invocation its own signature.
+    if ($nxt -and -not $nxt.StartsWith('-') -and $nxt -notmatch '[/=\\]') { $arg = $nxt.ToLower() }
+  }
+  $sig = if ($arg) { "$exe-$arg" } else { $exe }
+  return ($sig -replace '[^a-z0-9]+', '-').Trim('-')
+}
+
 # Silent and append-only. Never writes to stdout: this runs on every Bash call.
 function Invoke-Signal {
   if ($env:CONTEXT_KIT_NO_SIGNALS -eq '1') { exit 0 }
   $cmd = Get-JsonField 'command'
   if (-not $cmd) { exit 0 }
-  $parts = $cmd.Trim() -split '\s+' | Select-Object -First 2
-  $sig = (($parts -join '-').ToLower() -replace '[^a-z0-9]+', '-').Trim('-')
+  $sig = Get-CommandSignature $cmd
   if (-not $sig) { exit 0 }
   $stop = @('ls','cd','cat','echo','pwd','which','head','tail','grep','find','mkdir','rm','cp','mv','sed','awk','wc','true','exit','git-status','git-diff','git-log')
   $firstWord = ($sig -split '-')[0]
@@ -239,11 +313,93 @@ function Invoke-Signal {
   exit 0
 }
 
+# Who touched what. Silent, append-only, TSV: ts, kind, actor, target.
+#
+# This is the only record of the part of a session that leaves no artifact -
+# which subagent was spawned for what, which files it read, which skills
+# fired. /context-graph renders it as the activity layer over the static
+# context layout; without it the graph shows the shelf and not the traffic.
+#
+# Records identifiers only - a tool name, a file path, a skill name, a
+# subagent type. Never arguments, never file contents, never prompt text.
+function Invoke-Event {
+  if ($env:CONTEXT_KIT_NO_SIGNALS -eq '1') { exit 0 }
+  if ($env:CONTEXT_KIT_NO_ACTIVITY -eq '1') { exit 0 }
+  $obj = Get-HookInput
+  if (-not $obj) { exit 0 }
+
+  $sid = [string]$obj.session_id
+  if (-not $sid) { $sid = 'session' }
+  $actor = ($sid -replace '[^A-Za-z0-9]+', '-').Trim('-')
+  if ($actor.Length -gt 16) { $actor = $actor.Substring(0, 16) }
+  if (-not $actor) { $actor = 'session' }
+
+  $evt = [string]$obj.hook_event_name
+  $tool = [string]$obj.tool_name
+  $kind = ''
+  $target = ''
+
+  if ($evt -eq 'SubagentStart' -or $evt -eq 'SubagentStop') {
+    $kind = 'agent'
+    $target = [string]$obj.subagent_type
+    if (-not $target) { $target = [string]$obj.agent_type }
+    if (-not $target) { $target = 'subagent' }
+  } else {
+    switch ($tool) {
+      'Read'         { $kind = 'read';  $target = [string]$obj.tool_input.file_path }
+      'NotebookRead' { $kind = 'read';  $target = [string]$obj.tool_input.file_path }
+      'Edit'         { $kind = 'write'; $target = [string]$obj.tool_input.file_path }
+      'Write'        { $kind = 'write'; $target = [string]$obj.tool_input.file_path }
+      'NotebookEdit' { $kind = 'write'; $target = [string]$obj.tool_input.file_path }
+      'Skill'        { $kind = 'skill'; $target = [string]$obj.tool_input.skill }
+      'Task'         {
+        $kind = 'agent'
+        $target = [string]$obj.tool_input.subagent_type
+        if (-not $target) { $target = 'subagent' }
+      }
+      default { exit 0 }
+    }
+  }
+  if (-not $target) { exit 0 }
+
+  # Paths are stored project-relative so the ledger stays portable and no
+  # machine-specific prefix reaches the graph or the vault.
+  if ($kind -eq 'read' -or $kind -eq 'write') {
+    $normTarget = $target -replace '\\', '/'
+    $normProj = ($Proj -replace '\\', '/').TrimEnd('/')
+    if ($normTarget.StartsWith($normProj + '/', [StringComparison]::OrdinalIgnoreCase)) {
+      $target = $normTarget.Substring($normProj.Length + 1)
+    } elseif ($normTarget -match '^([A-Za-z]:)?/') {
+      exit 0  # outside the project: not ours to record
+    } else {
+      $target = $normTarget
+    }
+  }
+
+  # A tab or newline in a value would desynchronize every later column.
+  $target = ($target -replace "[`t`r`n]", ' ').Trim()
+  if ($target.Length -gt 200) { $target = $target.Substring(0, 200) }
+  if (-not $target) { exit 0 }
+
+  $evDir = Join-Path $Data 'events'
+  if (-not (Test-Path $evDir)) { New-Item -ItemType Directory -Force -Path $evDir | Out-Null }
+  $evFile = Join-Path $evDir "$Hash.tsv"
+  $stamp = [int][double]::Parse((Get-Date -UFormat %s))
+  Add-Content -Path $evFile -Value "$stamp`t$kind`t$actor`t$target"
+
+  $lines = @(Get-Content $evFile)
+  if ($lines.Count -gt 4000) {
+    Set-Content -Path $evFile -Value ($lines | Select-Object -Last 2000)
+  }
+  exit 0
+}
+
 switch ($Action) {
   'session'  { Invoke-Session }
   'subagent' { Invoke-Subagent }
   'mode'     { Invoke-Mode }
   'signal'   { Invoke-Signal }
+  'event'    { Invoke-Event }
   default    { exit 0 }
 }
 exit 0

@@ -14,10 +14,15 @@ be loaded when you are editing a stylesheet.
 was needed, writing more than was needed, and explaining more than was needed.
 Organizing `CLAUDE.md` does nothing about any of those.
 
-It is deliberately **not** a retrieval tool. It does not index your code, build
-a graph, or embed anything. Code structure is already in the code, and a good
-agent can read it. What an agent cannot read is *why* a column is nullable on
-purpose, or which of two contradictory requirements is the live one.
+It is deliberately **not** a retrieval tool. It does not index your code and it
+embeds nothing. Code structure is already in the code, and a good agent can
+read it. What an agent cannot read is *why* a column is nullable on purpose, or
+which of two contradictory requirements is the live one.
+
+There is one graph here, and it is not of your code. `/context-graph` draws the
+*context layout* — the tiers, the rules, the globs they claim, the skills, and
+who touched what — because that is the part nothing else can see. A rule whose
+`paths:` match no file is invisible in every view except this one.
 
 ---
 
@@ -30,6 +35,8 @@ purpose, or which of two contradictory requirements is the live one.
 | **Captures skills on its own** | Finish a procedure worth repeating and Claude writes `.claude/skills/<name>/SKILL.md` and tells you in one line. No permission prompt, no ceremony. |
 | **Detects repeats** | A silent ledger counts shell commands. Three runs of the same procedure with no skill covering it, and the next session says so. |
 | **Audits the layout** | `/context-init` classifies every line of `CLAUDE.md` and shows you a table before moving anything. |
+| **Draws the layout** | `/context-graph` renders tiers, rules, skills and recorded agent activity as a graph you open in a browser, and names the rules that can never fire. |
+| **Remembers what was settled** | `/finding` logs a conclusion, a dead end or a correction; `reflect` aggregates them into `LESSONS.md` so a long investigation survives compaction. |
 
 No Node, no Python, no install script. The hooks are POSIX `sh` (with a
 PowerShell twin), which is what Claude Code already runs.
@@ -127,6 +134,8 @@ default so that the other does not fail on every session of the wrong platform.
 | Command | What it does |
 |---|---|
 | `/context-init` | Set up or rebalance the layout. Picks its own mode. |
+| `/context-graph` | Draw the layout. `serve` for a URL, `vault` for Obsidian notes. |
+| `/finding` | Record a finding; `/finding reflect` rolls them into `LESSONS.md`. |
 | `/context-init bootstrap` | Scaffold and stamp the marker only. No survey. |
 | `/skill-capture` | Turn a repeatable procedure into a project skill. |
 | `/lean lite\|full\|ultra\|off` | Set the execution level. Persists across sessions. |
@@ -160,7 +169,8 @@ Restart the session afterwards and run `/context` to see the real number.
 | Variable | Effect |
 |---|---|
 | `CONTEXT_KIT_OFF=1` | Disables every context-kit hook. |
-| `CONTEXT_KIT_NO_SIGNALS=1` | Disables repeat detection only. |
+| `CONTEXT_KIT_NO_SIGNALS=1` | Disables repeat detection and the activity ledger. |
+| `CONTEXT_KIT_NO_ACTIVITY=1` | Disables the activity ledger only; repeat detection stays on. |
 | `CONTEXT_KIT_LEVEL=<level>` | Overrides the lean level for one session. |
 
 `/lean off` stops the ruleset injection but leaves the bootstrap and repeat
@@ -192,6 +202,96 @@ descriptions that will never fire.
 
 If the procedure needs a credential, it records the *name* of the variable and
 where it comes from — never a value.
+
+---
+
+## The context graph
+
+```
+/context-graph              # build it
+/context-graph serve        # ...and serve it at http://127.0.0.1:8848
+/context-graph vault        # ...or write it as Obsidian notes
+```
+
+Writes `.claude/context-graph/graph.json` and a `graph.html` you open in a
+browser. The HTML is **one self-contained file** — data inlined, nothing
+fetched, no CDN — so it works over `file://` with the network off.
+`scripts/check.sh` fails the build if an external reference ever appears in
+it.
+
+What it draws:
+
+- **The static layout.** `CLAUDE.md`, each `.claude/rules/*.md` and the globs
+  it claims, `knowledge/`, skills, commands, agents, findings — and the links
+  between them.
+- **The activity over it.** Which subagents were spawned, which files they
+  read and wrote, which skills fired. A silent, capped, project-relative
+  ledger written by the hooks; identifiers only, never arguments or content,
+  and nothing outside the project is recorded.
+
+Every edge is tagged `EXTRACTED` (a real link or frontmatter field),
+`INFERRED` (a name matched in prose) or `OBSERVED` (from the ledger), so you
+can tell what is written down from what was guessed from what merely
+happened once on your machine.
+
+What it flags, each with a specific fix:
+
+| | |
+|---|---|
+| a rule whose `paths:` match nothing | it can never fire — and you believed it was covering something |
+| a rule with `**/*` or no `paths:` | tier 1 in a tier-2 costume |
+| knowledge nothing routes to | tier 3 is reached by lookup, so nothing will find it |
+| a skill never invoked, or described as a capability | the description is the entire firing mechanism |
+| a `SKILL.md` over 12KB with no `references/` | it all loads the moment the skill fires |
+| tier 1 over 120 lines | paid on every session and every subagent |
+
+`vault` exports one wikilinked note per node so Obsidian's own graph view
+shows the same structure. **Pointing `--dir` at a vault you already use is
+safe:** a manifest records what context-kit wrote, and any file it did not
+create is never overwritten.
+
+`serve` binds `127.0.0.1` and warns, specifically, before binding anything
+wider. It serves with whatever the machine already has — `python3`, `php`,
+`ruby`, `busybox` — installs nothing, and if none exist it just prints the
+`file://` URL, because the page never needed a server.
+
+Full detail in [docs/context-graph.md](docs/context-graph.md), including what
+it deliberately does not measure.
+
+---
+
+## The findings ledger
+
+A finding that exists only in the transcript does not survive compaction.
+Compaction summarizes, and the exact line, the exact number, and the dead end
+you already ruled out are the first things a summary drops — which are
+precisely the things you would otherwise re-derive.
+
+```bash
+/finding            # record what you just settled
+/finding reflect    # roll every entry into findings/LESSONS.md
+```
+
+Entries are appended to `findings/<investigation>.md`, one file per
+investigation, never overwritten. Each carries an **outcome** — `useful`,
+`dead_end` or `corrected` — and the sources it leaned on. `reflect` then
+aggregates every entry into `LESSONS.md`: preferred sources, tentative ones,
+contested ones, known dead ends, corrections.
+
+It is deterministic. No model, stable ordering, the same bytes for the same
+input on the same day, and `--if-stale` makes it a no-op when nothing has
+been appended — cheap enough to run at the start of every session.
+
+Two rules keep it from lying to you:
+
+- **One entry never mints a trusted source.** Two corroborating `useful`
+  entries before anything is called preferred. One confident note is how a
+  wrong answer becomes a fact.
+- **Signals decay, 30-day half-life.** A dead end found last week outweighs a
+  success from March. Without decay, a ledger grows more confident the more
+  out of date it gets.
+
+Both are tunable (`--min-corroboration`, `--half-life`).
 
 ---
 
@@ -254,6 +354,8 @@ context-kit/
 │   └── rules.md                 # the injected ruleset, level-tagged
 ├── commands/
 │   ├── context-init.md          # /context-init
+│   ├── context-graph.md         # /context-graph
+│   ├── finding.md               # /finding
 │   ├── skill-capture.md         # /skill-capture
 │   ├── lean.md                  # /lean
 │   ├── lean-review.md           # /lean-review
@@ -261,6 +363,9 @@ context-kit/
 │   └── context-help.md          # /context-help
 ├── skills/
 │   ├── context-cleanup/         # the three-mode scaffold + audit skill
+│   │   └── references/          # modes A and B, loaded only when chosen
+│   ├── context-graph/           # reads graph.json and says what to cut
+│   ├── finding-ledger/          # the working log and its lessons
 │   ├── skill-capture/           # writes new skills
 │   ├── lean-execution/          # the long-form ruleset
 │   ├── lean-review/             # what can be deleted
@@ -268,14 +373,21 @@ context-kit/
 ├── knowledge/
 │   └── platform-native.md       # tier-3 reference, loads on lookup only
 ├── scripts/
-│   └── check.sh                 # self-check: versions, filenames, hook output
+│   ├── check.sh                 # self-check: versions, filenames, hook output
+│   ├── context-graph.sh         # build | serve | vault | open
+│   ├── context-graph.awk        # the layout scanner and analyzer
+│   ├── context-vault.awk        # graph.json -> an Obsidian vault
+│   ├── findings.sh              # record | reflect
+│   └── findings.awk             # the deterministic lessons aggregator
 ├── docs/
 │   ├── three-tier-model.md      # the model, and why it is shaped this way
+│   ├── context-graph.md         # what the graph holds and what it flags
 │   ├── efficiency.md            # the absorbed ruleset and its reasoning
 │   ├── authoring.md             # how to write each tier well
 │   ├── adoption.md              # rolling it into a repo that already exists
 │   └── anti-patterns.md         # the failure modes, and what they look like
 └── templates/
+    ├── graph/viewer.html        # the offline, dependency-free graph viewer
     ├── CLAUDE.template.md       # a starting tier-1 file
     ├── rules/example-rule.md    # a tier-2 rule with correct frontmatter
     ├── knowledge/INDEX.md       # the tier-3 index
@@ -291,7 +403,7 @@ or stopped failing open.
 
 ## Why bother
 
-Four failure modes this is built against:
+Five failure modes this is built against:
 
 1. **`CLAUDE.md` accumulates.** Every session that learns something adds a
    line. Nothing ever removes one. Adherence to the whole file degrades as it
@@ -303,9 +415,14 @@ Four failure modes this is built against:
    does not survive a long session. Appended to a file, it does.
 4. **The same procedure gets re-derived every time.** Nobody writes the skill,
    because writing the skill is a separate task nobody assigns.
+5. **The layout rots invisibly.** A rule whose `paths:` stopped matching
+   anything, a knowledge file nothing links to, a skill whose description
+   never fires — none of these produce an error. They produce silence, which
+   reads exactly like working.
 
-The layout addresses 1 and 3 structurally, and `skill-capture` addresses 4. For
-2, see the staleness section in
+The layout addresses 1 structurally, `findings/` and `/finding` address 3,
+`skill-capture` addresses 4, and `/context-graph` addresses 5 by making the
+silence visible. For 2, see the staleness section in
 [docs/anti-patterns.md](docs/anti-patterns.md) — the honest answer is that a
 hook beats a request.
 
@@ -318,11 +435,24 @@ This repo grows by absorbing patterns from other projects. When you find one:
 - A **failure mode** you hit twice → a section in `docs/anti-patterns.md`.
 - A **package that the platform already covers** → a row in
   `knowledge/platform-native.md`.
+- A **layout defect you can detect mechanically** → a finding in
+  `scripts/context-graph.awk`, and a row in the table in
+  [docs/context-graph.md](docs/context-graph.md).
 
 Keep the bar high. Anything added here loads into real projects, so it is
 subject to the same classification test as the knowledge it organizes.
 
 ## License
 
-MIT. See [LICENSE](LICENSE). Material absorbed from ponytail is MIT as well;
-attribution and the full list of what was taken is in [NOTICE](NOTICE).
+MIT. See [LICENSE](LICENSE).
+
+Two projects were absorbed, neither as a dependency: **ponytail** (MIT) for the
+lean execution ruleset, and **graphify** (Apache-2.0, Graphify Labs) for the
+graph's edge-confidence model, the Obsidian export and its ownership rule, the
+work-memory aggregation behind `/finding`, and the split-skill layout.
+[NOTICE](NOTICE) lists exactly what was taken from each — and, for graphify,
+what was deliberately left behind and why.
+
+graphify is a different tool answering a different question: if you want a
+queryable map of a large *codebase*, with cross-file call graphs across forty
+languages, use graphify. The two run happily side by side.
