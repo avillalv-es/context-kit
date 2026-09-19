@@ -1,0 +1,4 @@
+# Nothing generated lives here yet. Kept so the repo has an obvious place
+# to declare exclusions when it grows.
+.DS_Store
+Thumbs.db

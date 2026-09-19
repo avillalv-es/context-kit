@@ -1,0 +1,11 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "context-kit",
+  "description": "A three-tier context layout for Claude Code projects. Ships the /context-init command and the context-cleanup skill, which audit a repo's CLAUDE.md and move every piece of knowledge into the cheapest tier that still guarantees it gets used. Use when setting up, trimming, tiering or reorganizing a project's context.",
+  "version": "0.1.0",
+  "author": {
+    "name": "avillalv-es"
+  },
+  "homepage": "https://github.com/avillalv-es/context-kit",
+  "keywords": ["context", "claude-md", "skills", "memory", "token-budget"]
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "context-kit",
+  "description": "Personal marketplace for context-management tooling.",
+  "owner": {
+    "name": "avillalv-es"
+  },
+  "plugins": [
+    {
+      "name": "context-kit",
+      "description": "A three-tier context layout for Claude Code projects: the /context-init command, the context-cleanup skill, and the templates and authoring standards behind them.",
+      "author": { "name": "avillalv-es" },
+      "category": "productivity",
+      "source": "./"
+    }
+  ]
+}
