@@ -1,0 +1,56 @@
+# Expected import edges for the python fixture.
+# from<TAB>to, one per line. scripts/check.sh asserts this set exactly:
+# a missing line is an edge the extractor stopped finding, an extra line
+# is an edge it invented. Both are regressions.
+#
+# The fixture and an independent list of the edges it should produce were
+# written separately, then reconciled. Every disagreement was read back
+# against the source; the ones that were the extractor being wrong are
+# fixed, and this file is what survived.
+#
+# Regenerate deliberately, never reflexively - the point of the file is
+# that it does not move when the extractor changes.
+app/__init__.py	app/config.py
+app/main.py	app/__init__.py
+app/main.py	app/config.py
+app/main.py	app/models/reading.py
+app/main.py	app/services/ingest.py
+app/main.py	app/services/report.py
+app/models/__init__.py	app/models/reading.py
+app/services/__init__.py	app/services/ingest.py
+app/services/__init__.py	app/services/report.py
+app/services/adapters/__init__.py	app/services/adapters/csv_adapter.py
+app/services/adapters/__init__.py	app/services/adapters/json_adapter.py
+app/services/adapters/csv_adapter.py	app/config.py
+app/services/adapters/csv_adapter.py	app/models/reading.py
+app/services/adapters/csv_adapter.py	app/models/station.pyi
+app/services/adapters/csv_adapter.py	app/services/report.py
+app/services/adapters/json_adapter.py	app/models/reading.py
+app/services/adapters/json_adapter.py	app/util/reading.py
+app/services/export.py	app/__init__.py
+app/services/export.py	app/models/__init__.py
+app/services/export.py	app/services/__init__.py
+app/services/export.py	app/services/adapters/__init__.py
+app/services/export.py	app/services/adapters/csv_adapter.py
+app/services/export.py	app/services/ingest.py
+app/services/export.py	app/services/report.py
+app/services/export.py	app/util/text.py
+app/services/ingest.py	app/config.py
+app/services/ingest.py	app/models/reading.py
+app/services/ingest.py	app/util/text.py
+app/services/report.py	app/models/__init__.py
+app/services/report.py	app/util/text.py
+app/util/reading.py	app/models/reading.py
+app/util/reading.py	app/util/logging.py
+app/util/winpath.py	app/config.py
+app/util/winpath.py	app/models/reading.py
+tests/conftest.py	app/config.py
+tests/test_export.py	app/models/__init__.py
+tests/test_export.py	app/services/export.py
+tests/test_export.py	app/services/ingest.py
+tests/test_export.py	app/util/text.py
+tests/test_export.py	tests/util/text.py
+tests/test_ingest.py	app/models/reading.py
+tests/test_ingest.py	app/services/ingest.py
+tests/test_ingest.py	app/util/text.py
+tests/util/__init__.py	tests/util/text.py

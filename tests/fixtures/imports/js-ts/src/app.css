@@ -1,0 +1,5 @@
+/* Imported for its side effect by src/app.tsx. Not a JS/TS file, so it is
+   never scanned - but it is in the file index, so it is a valid edge target. */
+.btn {
+  border: 1px solid currentColor;
+}

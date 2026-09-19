@@ -21,6 +21,12 @@
             "command": "sh",
             "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/context-kit.sh", "subagent"],
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "sh",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/context-kit.sh", "event"],
+            "async": true
           }
         ]
       }
@@ -45,6 +51,17 @@
             "type": "command",
             "command": "sh",
             "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/context-kit.sh", "signal"],
+            "async": true
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Edit|Write|NotebookEdit|Task|Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/context-kit.sh", "event"],
             "async": true
           }
         ]

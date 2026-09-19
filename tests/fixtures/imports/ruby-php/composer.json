@@ -1,0 +1,18 @@
+{
+  "name": "acme/ledger-web",
+  "description": "Fixture: a small PHP front end over the Ruby ledger tooling.",
+  "type": "project",
+  "require": {
+    "php": ">=8.1",
+    "psr/log": "^3.0"
+  },
+  "autoload": {
+    "psr-4": {
+      "App\\": "src/",
+      "App\\Billing\\": "billing/"
+    }
+  },
+  "config": {
+    "vendor-dir": "vendor"
+  }
+}

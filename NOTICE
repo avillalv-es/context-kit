@@ -86,3 +86,172 @@ upstream and will not receive its fixes. The marker comment prefix is
 ponytail remains the better choice if you want the original, its multi-host
 adapters, or its benchmark suite. Running both at once injects two overlapping
 rulesets; pick one.
+
+================================================================================
+Third-party material: graphify
+================================================================================
+
+This product includes material adapted from **graphify**, absorbed at commit
+b9cd957 (v0.9.64).
+
+    graphify — https://github.com/Graphify-Labs/graphify
+    Copyright 2026 Safi Shamsi and the Graphify contributors.
+    Licensed under the Apache License, Version 2.0.
+
+    Licensed under the Apache License, Version 2.0 (the "License"); you may
+    not use this file except in compliance with the License. You may obtain a
+    copy of the License at
+
+        http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+    License for the specific language governing permissions and limitations
+    under the License.
+
+--------------------------------------------------------------------------------
+What was taken, and where it lives now
+--------------------------------------------------------------------------------
+
+No graphify source was copied. graphify is ~2MB of Python across forty
+tree-sitter grammars; this is POSIX sh and awk. Everything below was
+reimplemented from reading it.
+
+Adapted:
+
+  graphify/export.py to_json, ARCHITECTURE.md extraction schema
+    -> scripts/context-graph.awk
+    The node/edge record shape, and the per-edge confidence tag
+    (EXTRACTED / INFERRED, with OBSERVED added here for the activity ledger).
+    Tagging every edge with how it was learned is graphify's best idea: it
+    makes the difference between "this link is written down" and "I matched
+    it in prose" visible at the point of use rather than in a footnote.
+
+  graphify/export.py to_obsidian
+    -> scripts/context-vault.awk
+    One note per node with [[wikilinks]], kind tags in frontmatter, and an
+    index note. Most importantly the ownership manifest: a file present in
+    the target directory but absent from the manifest belongs to the user and
+    is never overwritten. graphify learned that one by clobbering people's
+    vaults (its issues #1506, #2863), and the rule is worth inheriting
+    without repeating the lesson.
+
+  graphify/cli.py _bash_invokes_search
+    -> the `signature` function in hooks/context-kit.sh and
+       Get-CommandSignature in hooks/context-kit.ps1
+    Deciding what a shell command actually runs from its executed tokens
+    rather than a substring scan: drop heredoc bodies and quoted spans, take
+    the first command segment, skip VAR=value prefixes and wrapper words with
+    their own flags. Used here to give one procedure one signature, so
+    `pytest -k x`, `sudo pytest -q` and `env CI=1 pytest` reach the repeat
+    threshold together instead of separately.
+
+  graphify/cli.py _mark_session_denied
+    -> claim_once in hooks/context-kit.sh
+    Claiming a one-time action through an atomic filesystem primitive
+    (O_EXCL there, mkdir here) rather than test-then-write, so a nudge fires
+    at most once and two subagents starting together cannot both claim it.
+
+  graphify/reflect.py
+    -> scripts/findings.awk, skills/finding-ledger/SKILL.md
+    The whole work-memory model: outcome tags (useful / dead_end /
+    corrected), a signed and time-decayed score per cited source, a
+    corroboration floor before anything is called preferred, the preferred /
+    tentative / contested / dead-end / corrections split, determinism with no
+    model in the loop, and the --if-stale no-op that makes it cheap to run
+    every session. The reader differs: graphify files one document per saved
+    answer, while this reads the append-only per-investigation logs that
+    findings/README.md already prescribed, so the existing convention did not
+    have to change.
+
+  graphify/affected.py
+    -> scripts/blast-radius.awk, scripts/blast-radius.sh
+    Reverse traversal as the answer to "what breaks if I change this":
+    breadth-first from a resolved seed, bounded depth, filtered by relation,
+    carrying the traversed edge's own source line so every row has somewhere
+    to click rather than the definition line of the node. graphify walks a
+    symbol-level graph built from tree-sitter ASTs; this walks a file-level
+    import graph built from line patterns, which is a fraction of the
+    machinery and degrades far more slowly, because an import line changes
+    much less often than a function body.
+
+  graphify/serve.py serve_http
+    -> the serve subcommand in scripts/context-graph.sh
+    Bind loopback by default and warn loudly and specifically before binding
+    wider.
+
+  tools/skillgen (the split core + references/ layout)
+    -> docs/authoring.md, skills/skill-capture/SKILL.md, and applied to
+       skills/context-cleanup/
+    Keeping a skill's decision path in SKILL.md and its lookup material in a
+    references/ sidecar loaded on demand. This is the three-tier model
+    applied inside a skill; graphify ships the structure, and it is the right
+    structure.
+
+--------------------------------------------------------------------------------
+What was deliberately not taken
+--------------------------------------------------------------------------------
+
+Recorded because the reasons are the interesting part, and because someone
+will otherwise propose them again.
+
+  The symbol-level code index (extract.py, ~380KB, forty tree-sitter
+  grammars, six separate resolver modules).
+    A file-level import graph was taken instead - scripts/code-graph.awk,
+    reachable as /blast-radius and as /context-graph --code. It answers
+    "which file depends on which file" rather than "which function calls
+    which function", which is most of the value of the symbol index for a
+    small fraction of its cost, and it stays true for longer.
+
+    The symbol level is where graphify's expense and fragility both live.
+    251 of 2072 lines in its changelog concern resolution, dangling edges or
+    missed calls - roughly one release in eight is a correction to an edge
+    that was drawn wrong or not drawn at all. The cases that need a resolver
+    the most (dynamic dispatch, DI containers, reflection) are the ones it
+    can only guess at, and a wrong edge in an impact report is worse than a
+    missing one: a missing edge makes you look further, a wrong one makes
+    you stop looking.
+
+    The surrounding apparatus was declined with it: the semantic cache, the
+    watch daemon, the git merge driver for the graph file, and the
+    post-commit and post-checkout hooks. All of that exists to stop a
+    symbol index going stale between edits. A file-level graph rebuilds in
+    one awk pass, so it is rebuilt on every run instead.
+
+  benchmark.py, and the token-reduction figure it prints.
+    Its baseline is `corpus_words = nodes * 50` whenever a real word count is
+    not supplied, and the headline ratio divides by it. A fabricated
+    denominator is worse than no number, because the number gets quoted.
+    /context and /shortcut-ledger produce real counts; use those.
+
+  The unpkg vis-network dependency in the HTML export.
+    A viewer that fetches a script from a CDN is a blank page on an
+    air-gapped machine. templates/graph/viewer.html draws to a canvas with
+    nothing loaded from anywhere, and scripts/check.sh fails the build if
+    that ever stops being true.
+
+  The MCP server (serve.py, ~127KB).
+    A context graph has tens of nodes. Reading graph.json costs less than
+    standing up a protocol to query it.
+
+  The 41KB single-file skill, and the twenty-plus per-platform installers.
+    A context-efficiency tool whose own skill is 41KB is the failure mode
+    this plugin exists to argue against. The split was worth taking; the size
+    was not.
+
+  Neo4j, FalkorDB, GraphML, Cypher and SVG exports.
+    No audience here.
+
+--------------------------------------------------------------------------------
+Divergence
+--------------------------------------------------------------------------------
+
+This is an absorption, not a dependency. context-kit does not track graphify
+upstream and will not receive its fixes.
+
+graphify is a different tool solving a different problem, and a good one. If
+what you want is a queryable map of a large codebase — cross-file call
+graphs, community detection, query/path/explain over forty languages — use
+graphify. It is not a competitor to this; the two answer different questions
+and run happily side by side.

@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Contoso.Metering.Abstractions\Contoso.Metering.Abstractions.csproj" />
+
+    <!-- Dropped in ADR-022. The project it names still exists on disk, so the
+         matcher resolves it and reports a dependency that was deleted:
+    <ProjectReference Include="..\Contoso.Metering.Core\Contoso.Metering.Core.csproj" />
+    -->
+  </ItemGroup>
+
+</Project>

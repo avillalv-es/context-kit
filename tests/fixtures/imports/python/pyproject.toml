@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "weatherlog"
+version = "0.1.0"
+description = "Tiny station-reading logger used as an import-graph fixture."
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+html = ["jinja2>=3.1"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+weatherlog = "app.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]

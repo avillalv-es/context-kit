@@ -1,0 +1,16 @@
+{
+  "name": "js-ts-fixture",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "imports": {
+    "#config": "./src/config/settings.ts"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "react": "^18.3.1"
+  }
+}
