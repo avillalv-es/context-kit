@@ -1,11 +1,19 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "context-kit",
-  "description": "A three-tier context layout for Claude Code projects. Ships the /context-init command and the context-cleanup skill, which audit a repo's CLAUDE.md and move every piece of knowledge into the cheapest tier that still guarantees it gets used. Use when setting up, trimming, tiering or reorganizing a project's context.",
-  "version": "0.1.0",
-  "author": {
-    "name": "avillalv-es"
-  },
+  "description": "A three-tier context layout plus a lean execution ruleset, for any coding project. Bootstraps CLAUDE.md on first session, injects a short reuse-first ruleset into every session and subagent, captures repeatable procedures as skills on its own, and audits the layout with /context-init. Use when setting up, trimming, tiering or reorganizing a project's context, or when Claude is being wasteful.",
+  "version": "0.2.0",
+  "author": { "name": "avillalv-es" },
   "homepage": "https://github.com/avillalv-es/context-kit",
-  "keywords": ["context", "claude-md", "skills", "memory", "token-budget"]
+  "keywords": [
+    "context",
+    "claude-md",
+    "skills",
+    "memory",
+    "token-budget",
+    "efficiency",
+    "yagni",
+    "skill-capture"
+  ],
+  "hooks": "./hooks/hooks.json"
 }
