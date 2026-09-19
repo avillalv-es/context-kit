@@ -28,6 +28,8 @@ CMD="${1:-help}"
 
 PORT=8848
 HOST=127.0.0.1
+CODE=0
+CODECAP=120
 VAULT_DIR=""
 OPEN_AFTER=1
 
@@ -40,6 +42,8 @@ while [ $# -gt 0 ]; do
     --port)  PORT="${2:-}"; shift 2 ;;
     --host)  HOST="${2:-}"; shift 2 ;;
     --dir)   VAULT_DIR="${2:-}"; shift 2 ;;
+    --code)  CODE=1; shift ;;
+    --code-cap) CODE=1; CODECAP="${2:-120}"; shift 2 ;;
     --no-open) OPEN_AFTER=0; shift ;;
     -h|--help) CMD=help; shift ;;
     *) shift ;;
@@ -119,7 +123,10 @@ manifest() {
 repo_files() {
   cd "$ROOT" || return 0
   if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    git ls-files 2>/dev/null && return 0
+    # --cached AND --others: tracked files only would make a rule's paths:
+    # glob under-count a directory of files that are not committed yet, and
+    # report a live rule as matching nothing.
+    git ls-files --cached --others --exclude-standard 2>/dev/null | sort -u && return 0
   fi
   find . -type f \
     ! -path './.git/*' ! -path './node_modules/*' ! -path './.venv/*' \
@@ -146,6 +153,15 @@ do_build() {
     exit 2
   fi
 
+  # The code layer: which module imports which. Built here rather than read
+  # from a stale file, because a graph that quietly describes yesterday's
+  # imports is worse than no graph.
+  IMP=""
+  if [ "$CODE" -eq 1 ]; then
+    sh "$PLUGIN_ROOT/scripts/code-graph.sh" --root "$ROOT" --out "$OUT" --quiet 2>/dev/null
+    [ -s "$OUT/imports.tsv" ] && IMP="$OUT/imports.tsv"
+  fi
+
   EV=""
   [ -r "$EVENTS" ] && EV="$EVENTS"
   STAMP="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
@@ -155,6 +171,8 @@ do_build() {
       -v root="$ROOT" \
       -v filelist="$TMP/files.txt" \
       -v events="$EV" \
+      -v imports="$IMP" \
+      -v codecap="$CODECAP" \
       -v generated="$STAMP" \
       < "$TMP/manifest.tsv" > "$TMP/graph.json" || die "graph build failed"
 
@@ -191,7 +209,14 @@ do_build() {
       match($0, /"edges": [0-9]+/);      e = substr($0, RSTART+9, RLENGTH-9)
       match($0, /"issues": [0-9]+/);     i = substr($0, RSTART+10, RLENGTH-10)
       match($0, /"tier1_lines": [0-9]+/); t = substr($0, RSTART+15, RLENGTH-15)
-      printf "%s nodes, %s edges, %s findings, %s lines in tier 1\n", n, e, i, t
+      m = ""; if (match($0, /"modules": [0-9]+/)) m = substr($0, RSTART+11, RLENGTH-11)
+      h = ""; if (match($0, /"modules_hidden": [0-9]+/)) h = substr($0, RSTART+18, RLENGTH-18)
+      printf "%s nodes, %s edges, %s findings, %s lines in tier 1", n, e, i, t
+      if (m != "" && m+0 > 0) {
+        printf ", %s modules", m
+        if (h != "" && h+0 > 0) printf " (%s more not drawn)", h
+      }
+      printf "\n"
     }
   ' "$OUT/graph.json"
   printf 'wrote %s\n' "$OUT/graph.json"
@@ -287,6 +312,8 @@ context-graph - the context layout as a graph you can open
   --port N         serve port            (default 8848)
   --host H         serve bind host       (default 127.0.0.1)
   --dir DIR        vault directory       (default <out>/vault)
+  --code           add the module import layer (file-level, from imports)
+  --code-cap N     how many modules to draw, by fan-in (default 120)
 
 The viewer is one self-contained file with the data inlined. It needs no
 server and no network; serve exists only for when you want a URL.

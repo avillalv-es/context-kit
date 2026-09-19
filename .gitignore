@@ -3,6 +3,10 @@
 .DS_Store
 Thumbs.db
 
-# /context-graph output. Derived, rebuilt on every run, and committing it
-# turns every session into a diff.
-.claude/context-graph/
+# /context-graph and /blast-radius output. Derived, rebuilt on every run, and
+# committing it turns every session into a diff.
+#
+# The **/ prefix matters: a pattern with an interior slash is anchored to this
+# file's directory, so a bare `.claude/context-graph/` would not cover the
+# copies the tools write under tests/fixtures/ when run against one.
+**/.claude/context-graph/

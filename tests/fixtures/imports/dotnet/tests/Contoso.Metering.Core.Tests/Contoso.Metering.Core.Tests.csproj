@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Contoso.Metering.Core\Contoso.Metering.Core.csproj" />
+
+    <!-- The same element split across two lines: a line matcher never sees
+         ProjectReference and Include together, so this edge is missed. -->
+    <ProjectReference
+      Include="..\..\src\Contoso.Metering.Abstractions\Contoso.Metering.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit" Version="2.6.6" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+</Project>

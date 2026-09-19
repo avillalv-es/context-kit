@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "jsx": "react-jsx",
+    "strict": true,
+    "baseUrl": ".",
+    "paths": {
+      "@lib": ["src/lib/index.ts"],
+      "@app/*": ["src/*"]
+    }
+  },
+  "include": ["src", "scripts"]
+}

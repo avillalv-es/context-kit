@@ -12,12 +12,18 @@ context-kit
     /context-init            set up or rebalance the three-tier layout
     /context-init bootstrap  scaffold + stamp the marker only, no survey
     /context-graph           draw the layout; also `serve`, `vault`, `open`
+    /context-graph --code    add the module import layer
     /context                 (built-in) the real context-window number
 
   Skills
     /skill-capture           turn a repeatable procedure into a project skill
     /lean-review [--repo]    what can be deleted; diff by default
     /shortcut-ledger         every deliberate shortcut marked in this repo
+
+  Impact
+    /blast-radius --diff     what breaks, given everything you just changed
+    /blast-radius <symbol>   what depends on a function, class or constant
+    /blast-radius --file P   what depends on a file
 
   Findings
     /finding                 record what you just settled, or a dead end

@@ -1,0 +1,24 @@
+# Expected import edges for the python fixture.
+# from<TAB>to, one per line. scripts/check.sh asserts this set exactly:
+# a missing line is an edge the extractor stopped finding, an extra line
+# is an edge it invented. Both are regressions.
+#
+# Regenerate deliberately, never reflexively - the point of the file is
+# that it does not move when the extractor changes.
+app/__init__.py	app/config.py
+app/main.py	app/__init__.py
+app/main.py	app/models/reading.py
+app/main.py	app/services/ingest.py
+app/main.py	app/services/report.py
+app/models/__init__.py	app/models/reading.py
+app/services/__init__.py	app/services/ingest.py
+app/services/__init__.py	app/services/report.py
+app/services/ingest.py	app/config.py
+app/services/ingest.py	app/models/reading.py
+app/services/ingest.py	app/util/text.py
+app/services/report.py	app/models/__init__.py
+app/services/report.py	app/util/text.py
+tests/conftest.py	app/config.py
+tests/test_ingest.py	app/models/reading.py
+tests/test_ingest.py	app/services/ingest.py
+tests/test_ingest.py	app/util/text.py

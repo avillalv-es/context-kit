@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Contoso.Metering.Abstractions</RootNamespace>
+  </PropertyGroup>
+
+  <!-- Leaf project. No ProjectReference of its own, so no outgoing edges. -->
+
+</Project>

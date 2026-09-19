@@ -137,6 +137,35 @@ no filesystem wants and a title no reader gains from; what matters about a
 glob is how many files it matches, and that is printed inside the rule that
 claims it.
 
+## The code layer
+
+`--code` adds a second layer: the modules of the codebase and the imports
+between them, from `scripts/code-graph.awk`. Same graph, same viewer.
+
+```bash
+/context-graph --code
+/context-graph --code-cap 300     # draw more modules
+```
+
+It is **capped**, by fan-in, at 120 modules by default. A real application
+has thousands of source files, and drawing all of them produces a hairball
+that answers nothing. What the layout graph is for is showing which modules
+everything flows through. `/blast-radius` reads the full, uncapped edge list
+separately — the cap is a display decision, not a data one.
+
+The layer earns its place through one finding that needs **both** layers, and
+that neither grep nor a code index can produce alone:
+
+> *N files import this and no rule covers it.*
+
+A module with high fan-in and no tier-2 rule is a module everything leans on
+with no conventions written down. Finding it requires knowing the import
+graph *and* knowing which paths each rule's `paths:` glob claims. Nothing
+else in either tool has both halves.
+
+Full detail on the extractor, what it resolves and what it drops, is in
+[blast-radius.md](blast-radius.md).
+
 ## What it will not tell you
 
 A token or percentage saving. The graph counts nodes, edges, lines and glob

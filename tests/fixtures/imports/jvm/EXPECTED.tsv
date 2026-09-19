@@ -1,0 +1,17 @@
+# Expected import edges for the jvm fixture.
+# from<TAB>to, one per line. scripts/check.sh asserts this set exactly:
+# a missing line is an edge the extractor stopped finding, an extra line
+# is an edge it invented. Both are regressions.
+#
+# Regenerate deliberately, never reflexively - the point of the file is
+# that it does not move when the extractor changes.
+src/main/java/com/acme/app/Main.java	src/main/java/com/acme/billing/Invoice.java
+src/main/java/com/acme/app/Main.java	src/main/java/com/acme/billing/InvoiceService.java
+src/main/java/com/acme/app/Main.java	src/main/java/com/acme/util/Money.java
+src/main/java/com/acme/billing/Invoice.java	src/main/java/com/acme/util/Money.java
+src/main/java/com/acme/billing/InvoiceService.java	src/main/java/com/acme/util/Money.java
+src/main/kotlin/com/acme/app/Reporter.kt	src/main/java/com/acme/util/Money.java
+src/main/kotlin/com/acme/app/Reporter.kt	src/main/kotlin/com/acme/billing/PricingRules.kt
+src/main/kotlin/com/acme/billing/PricingRules.kt	src/main/java/com/acme/util/Money.java
+src/main/kotlin/com/acme/billing/PricingRules.kt	src/main/kotlin/com/acme/util/Strings.kt
+src/test/java/com/acme/billing/InvoiceServiceTest.java	src/main/java/com/acme/util/Money.java

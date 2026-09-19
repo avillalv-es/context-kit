@@ -19,10 +19,17 @@ embeds nothing. Code structure is already in the code, and a good agent can
 read it. What an agent cannot read is *why* a column is nullable on purpose, or
 which of two contradictory requirements is the live one.
 
-There is one graph here, and it is not of your code. `/context-graph` draws the
-*context layout* — the tiers, the rules, the globs they claim, the skills, and
-who touched what — because that is the part nothing else can see. A rule whose
-`paths:` match no file is invisible in every view except this one.
+There is one graph here. `/context-graph` draws the *context layout* — the
+tiers, the rules, the globs they claim, the skills, and who touched what —
+because that is the part nothing else can see. A rule whose `paths:` match no
+file is invisible in every view except this one.
+
+It also draws a **file-level** map of the code, and `/blast-radius` walks that
+map backwards to answer *what breaks if I change this*. That is the one
+question grep structurally cannot answer. It stops well short of a symbol
+index: it knows which file depends on which file, not which function calls
+which, and that is the trade — a fraction of the machinery, and it stays true
+for far longer.
 
 ---
 
@@ -37,6 +44,7 @@ who touched what — because that is the part nothing else can see. A rule whose
 | **Audits the layout** | `/context-init` classifies every line of `CLAUDE.md` and shows you a table before moving anything. |
 | **Draws the layout** | `/context-graph` renders tiers, rules, skills and recorded agent activity as a graph you open in a browser, and names the rules that can never fire. |
 | **Remembers what was settled** | `/finding` logs a conclusion, a dead end or a correction; `reflect` aggregates them into `LESSONS.md` so a long investigation survives compaction. |
+| **Traces impact** | `/blast-radius --diff` walks the import graph backwards from everything you changed and lists what is downstream, ranked by distance, with a line to open in each file. |
 
 No Node, no Python, no install script. The hooks are POSIX `sh` (with a
 PowerShell twin), which is what Claude Code already runs.
@@ -136,6 +144,7 @@ default so that the other does not fail on every session of the wrong platform.
 | `/context-init` | Set up or rebalance the layout. Picks its own mode. |
 | `/context-graph` | Draw the layout. `serve` for a URL, `vault` for Obsidian notes. |
 | `/finding` | Record a finding; `/finding reflect` rolls them into `LESSONS.md`. |
+| `/blast-radius` | What breaks if this changes. `--diff`, a symbol, or `--file`. |
 | `/context-init bootstrap` | Scaffold and stamp the marker only. No survey. |
 | `/skill-capture` | Turn a repeatable procedure into a project skill. |
 | `/lean lite\|full\|ultra\|off` | Set the execution level. Persists across sessions. |
@@ -260,6 +269,70 @@ it deliberately does not measure.
 
 ---
 
+## Blast radius
+
+```bash
+/blast-radius --diff                 # everything you just changed
+/blast-radius --diff --base main     # everything on this branch
+/blast-radius verifySignature        # a symbol
+/blast-radius --file src/lib/auth.ts # a file
+```
+
+Walks the import graph **backwards** from the seed and reports what is
+downstream, grouped by distance, with the importing line in each file:
+
+```
+Blast radius
+
+Seed (1):
+  internal/util/strings.go
+
+9 files downstream, to depth 3:
+
+  depth 1 - imports a seed directly (3)
+    internal/config/config.go:8      -> internal/util/strings.go
+    internal/store/store.go:7        -> internal/util/strings.go
+    pkg/telemetry/metrics.go:3       -> internal/util/strings.go
+
+  depth 2 - imports something at depth 1 (6)
+    cmd/appsvc/main.go:16            -> internal/config/config.go
+    ...
+```
+
+`--diff` is the mode for audits and debugging: it seeds from every changed
+file at once — unstaged, staged **and untracked**, because a new file is the
+most common thing an audit adds and `git diff` alone never mentions one.
+
+**It is file-level, and the report never lets you forget it.** It follows
+imports, so it cannot see runtime wiring — route tables, DI containers,
+plugin registries, reflection, string-keyed factories — and it does not track
+which function calls which. Every run prints that caveat, including the runs
+where every import resolved cleanly, because a clean run is exactly when it
+would otherwise read as complete.
+
+Symbol mode separates resolved dependencies from bare name matches, since
+"same name, unrelated symbol" is the common case and folding the two together
+is how an impact report becomes fiction.
+
+Resolution covers relative paths, `tsconfig`/`jsconfig` aliases from **every**
+config in the repo (monorepos declare their own), `go.mod` module prefixes
+from every module, composer PSR-4, Python dotted and relative imports, Rust
+`mod`/`use`, JVM packages, C `#include`, and the TypeScript ESM habit of
+writing `./x.js` for a file called `x.ts`. Anything it cannot resolve
+uniquely is **dropped with a reason**, never guessed — a wrong edge makes you
+stop looking, a missing one only makes you look further.
+
+Twelve language families, each with a fixture under `tests/fixtures/imports/`
+carrying the exact edge set `scripts/check.sh` asserts. The fixtures include
+the traps on purpose: commented-out imports, imports inside string and
+template literals, multi-line imports, colliding basenames, and a sibling
+module whose name is a prefix of the real one.
+
+Detail, and the full list of what it cannot see, in
+[docs/blast-radius.md](docs/blast-radius.md).
+
+---
+
 ## The findings ledger
 
 A finding that exists only in the transcript does not survive compaction.
@@ -355,6 +428,7 @@ context-kit/
 ├── commands/
 │   ├── context-init.md          # /context-init
 │   ├── context-graph.md         # /context-graph
+│   ├── blast-radius.md          # /blast-radius
 │   ├── finding.md               # /finding
 │   ├── skill-capture.md         # /skill-capture
 │   ├── lean.md                  # /lean
@@ -365,6 +439,7 @@ context-kit/
 │   ├── context-cleanup/         # the three-mode scaffold + audit skill
 │   │   └── references/          # modes A and B, loaded only when chosen
 │   ├── context-graph/           # reads graph.json and says what to cut
+│   ├── blast-radius/            # impact analysis, and how far to trust it
 │   ├── finding-ledger/          # the working log and its lessons
 │   ├── skill-capture/           # writes new skills
 │   ├── lean-execution/          # the long-form ruleset
@@ -375,6 +450,10 @@ context-kit/
 ├── scripts/
 │   ├── check.sh                 # self-check: versions, filenames, hook output
 │   ├── context-graph.sh         # build | serve | vault | open
+│   ├── code-graph.sh            # the file-level import graph
+│   ├── code-graph.awk           # import extraction and path resolution
+│   ├── blast-radius.sh          # what breaks if this changes
+│   ├── blast-radius.awk         # the reverse traversal
 │   ├── context-graph.awk        # the layout scanner and analyzer
 │   ├── context-vault.awk        # graph.json -> an Obsidian vault
 │   ├── findings.sh              # record | reflect
@@ -382,10 +461,13 @@ context-kit/
 ├── docs/
 │   ├── three-tier-model.md      # the model, and why it is shaped this way
 │   ├── context-graph.md         # what the graph holds and what it flags
+│   ├── blast-radius.md          # the file-level trade, and its blind spots
 │   ├── efficiency.md            # the absorbed ruleset and its reasoning
 │   ├── authoring.md             # how to write each tier well
 │   ├── adoption.md              # rolling it into a repo that already exists
 │   └── anti-patterns.md         # the failure modes, and what they look like
+├── tests/
+│   └── fixtures/imports/        # one per language, with its expected edges
 └── templates/
     ├── graph/viewer.html        # the offline, dependency-free graph viewer
     ├── CLAUDE.template.md       # a starting tier-1 file

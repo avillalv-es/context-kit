@@ -1,0 +1,26 @@
+# Expected import edges for the go fixture.
+# from<TAB>to, one per line. scripts/check.sh asserts this set exactly:
+# a missing line is an edge the extractor stopped finding, an extra line
+# is an edge it invented. Both are regressions.
+#
+# Regenerate deliberately, never reflexively - the point of the file is
+# that it does not move when the extractor changes.
+cmd/appsvc/main.go	internal/config/config.go
+cmd/appsvc/main.go	internal/handler/handler.go
+cmd/appsvc/main.go	internal/handler/render.go
+cmd/appsvc/main.go	internal/store/driver/sqlite.go
+cmd/appsvc/main_test.go	internal/config/config.go
+cmd/appsvc/main_test.go	internal/store/memory.go
+cmd/appsvc/main_test.go	internal/store/store.go
+internal/config/config.go	internal/util/strings.go
+internal/handler/handler.go	internal/store/memory.go
+internal/handler/handler.go	internal/store/store.go
+internal/handler/handler.go	pkg/telemetry/metrics.go
+internal/handler/handler.go	pkg/telemetry/telemetry.go
+internal/handler/render.go	pkg/telemetry/metrics.go
+internal/handler/render.go	pkg/telemetry/telemetry.go
+internal/store/driver/sqlite.go	internal/store/memory.go
+internal/store/driver/sqlite.go	internal/store/store.go
+internal/store/memory.go	internal/config/config.go
+internal/store/store.go	internal/util/strings.go
+pkg/telemetry/metrics.go	internal/util/strings.go

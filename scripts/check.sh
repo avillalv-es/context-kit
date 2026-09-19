@@ -313,6 +313,135 @@ for f in skills/*/SKILL.md; do
 done
 [ "$BUDGET_FAIL" -eq 0 ] && pass "every skill is within the loading budget"
 
+# --- 16. the import extractor, per language fixture ------------------------
+# Each tests/fixtures/imports/<family>/ carries an EXPECTED.tsv of from->to
+# edges the extractor must find. The fixtures deliberately include the traps:
+# a commented-out import, an import inside a string literal, a multi-line
+# import, a sibling module whose name is a prefix of the real one. A pass
+# here means those produced no edge.
+FIXROOT="tests/fixtures/imports"
+if [ -d "$FIXROOT" ]; then
+  FAM_FAIL=0
+  FAM_N=0
+  for FAM in "$FIXROOT"/*/; do
+    [ -d "$FAM" ] || continue
+    NAME="$(basename "$FAM")"
+    EXP="$FAM/EXPECTED.tsv"
+    [ -f "$EXP" ] || continue
+    FAM_N=$((FAM_N + 1))
+    FOUT="$TMP/fx-$NAME"
+    if ! sh scripts/code-graph.sh --root "$FAM" --out "$FOUT" --quiet >/dev/null 2>&1; then
+      fail "extractor crashed on the $NAME fixture"; FAM_FAIL=1; continue
+    fi
+    cut -f1,2 "$FOUT/imports.tsv" 2>/dev/null | sort -u > "$TMP/got-$NAME.tsv"
+    grep -v '^#' "$EXP" | grep -v '^[[:space:]]*$' | sort -u > "$TMP/exp-$NAME.tsv"
+    MISSING="$(comm -23 "$TMP/exp-$NAME.tsv" "$TMP/got-$NAME.tsv" 2>/dev/null)"
+    EXTRA="$(comm -13 "$TMP/exp-$NAME.tsv" "$TMP/got-$NAME.tsv" 2>/dev/null)"
+    if [ -n "$MISSING" ]; then
+      fail "$NAME: edges the extractor should have found and did not:"
+      printf '%s\n' "$MISSING" | head -8 | sed 's/^/        /'
+      FAM_FAIL=1
+    fi
+    if [ -n "$EXTRA" ]; then
+      fail "$NAME: edges the extractor invented:"
+      printf '%s\n' "$EXTRA" | head -8 | sed 's/^/        /'
+      FAM_FAIL=1
+    fi
+    [ -z "$MISSING" ] && [ -z "$EXTRA" ] && pass "$NAME fixture: every expected edge, and no invented ones"
+  done
+  if [ "$FAM_N" -eq 0 ]; then
+    note "no language fixtures with an EXPECTED.tsv - extractor untested"
+  fi
+
+  # An unresolvable import must be DROPPED, never guessed into an edge. The
+  # test: no edge may point outside the fixture it came from.
+  LEAK=0
+  for FAM in "$FIXROOT"/*/; do
+    [ -d "$FAM" ] || continue
+    NAME="$(basename "$FAM")"
+    [ -f "$TMP/fx-$NAME/imports.tsv" ] || continue
+    if awk -F'\t' '$2 ~ /^\// || $2 ~ /\.\./ { print; found=1 } END { exit !found }' \
+         "$TMP/fx-$NAME/imports.tsv" >/dev/null 2>&1; then
+      fail "$NAME: an edge escaped the fixture tree"
+      LEAK=1
+    fi
+  done
+  [ "$LEAK" -eq 0 ] && [ "$FAM_N" -gt 0 ] && pass "no edge resolves outside the tree it came from"
+fi
+
+# --- 17. blast-radius walks importers, not imports -------------------------
+BRP="$TMP/brproj"
+rm -rf "$BRP"; mkdir -p "$BRP/src/lib" "$BRP/src/api"
+printf 'export function verify() { return true }\n' > "$BRP/src/lib/auth.ts"
+printf "import { verify } from '../lib/auth'\nexport const login = verify\n" > "$BRP/src/api/login.ts"
+printf "import { login } from './login'\nexport const r = login\n" > "$BRP/src/api/routes.ts"
+printf 'export const unrelated = 1\n' > "$BRP/src/api/other.ts"
+BR="$(sh scripts/blast-radius.sh --root "$BRP" --file src/lib/auth.ts --out "$TMP/brout" 2>&1)"
+case "$BR" in
+  *"src/api/login.ts"*) pass "blast-radius finds the direct importer" ;;
+  *) fail "blast-radius missed the direct importer"; printf '%s\n' "$BR" | head -6 | sed 's/^/        /' ;;
+esac
+case "$BR" in
+  *"src/api/routes.ts"*) pass "blast-radius follows the chain to depth 2" ;;
+  *) fail "blast-radius did not reach the transitive importer" ;;
+esac
+case "$BR" in
+  *"src/api/other.ts"*) fail "blast-radius reported an unrelated file" ;;
+  *) pass "blast-radius leaves unrelated files out" ;;
+esac
+# Direction matters: auth.ts must NOT appear as downstream of login.ts.
+BR2="$(sh scripts/blast-radius.sh --root "$BRP" --file src/api/routes.ts --out "$TMP/brout" 2>&1)"
+case "$BR2" in
+  *"Nothing imports the seed"*) pass "blast-radius walks importers, not imports" ;;
+  *) fail "blast-radius walked the graph forwards - it reported what the seed imports" ;;
+esac
+# The report must admit what it cannot see rather than implying completeness.
+case "$BR" in
+  *"never as a complete one"*) pass "blast-radius states its blind spots" ;;
+  *) fail "blast-radius omitted the completeness caveat" ;;
+esac
+
+# --- 18. the extractor never invents an edge from a comment or a string ----
+TRAP="$TMP/trapproj"
+rm -rf "$TRAP"; mkdir -p "$TRAP/src"
+printf 'export const real = 1\n' > "$TRAP/src/real.ts"
+printf 'export const ghost = 1\n' > "$TRAP/src/ghost.ts"
+cat > "$TRAP/src/main.ts" <<'TRAPEOF'
+import { real } from './real'
+// import { ghost } from './ghost'
+/* import { ghost } from './ghost' */
+const s = "import { ghost } from './ghost'"
+const t = `require('./ghost')`
+TRAPEOF
+sh scripts/code-graph.sh --root "$TRAP" --out "$TMP/trapout" --quiet >/dev/null 2>&1
+if grep -q 'ghost' "$TMP/trapout/imports.tsv" 2>/dev/null; then
+  fail "extractor invented an edge from a comment or a string literal"
+  grep 'ghost' "$TMP/trapout/imports.tsv" | sed 's/^/        /'
+else
+  pass "extractor ignores commented-out and quoted imports"
+fi
+grep -q 'real.ts' "$TMP/trapout/imports.tsv" 2>/dev/null \
+  && pass "extractor still finds the real import beside the traps" \
+  || fail "extractor missed the real import"
+
+# --- 19. --diff seeds from the working tree, untracked included ------------
+DP="$TMP/diffproj"
+rm -rf "$DP"; mkdir -p "$DP/src"
+( cd "$DP" && git init -q . 2>/dev/null \
+  && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init 2>/dev/null ) || true
+printf 'export const a = 1\n' > "$DP/src/a.ts"
+printf "import { a } from './a'\nexport const b = a\n" > "$DP/src/b.ts"
+if [ -d "$DP/.git" ]; then
+  DR="$(sh scripts/blast-radius.sh --root "$DP" --diff --out "$TMP/dout" 2>&1)"
+  case "$DR" in
+    *"src/b.ts"*) pass "--diff seeds from untracked files and finds their importers" ;;
+    *"nothing changed"*) fail "--diff reported nothing changed with untracked files present" ;;
+    *) fail "--diff did not trace the changed file" ;;
+  esac
+else
+  note "git unavailable - --diff mode untested"
+fi
+
 rm -rf "$TMP" 2>/dev/null
 
 printf '\n'

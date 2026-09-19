@@ -165,6 +165,17 @@ Adapted:
     findings/README.md already prescribed, so the existing convention did not
     have to change.
 
+  graphify/affected.py
+    -> scripts/blast-radius.awk, scripts/blast-radius.sh
+    Reverse traversal as the answer to "what breaks if I change this":
+    breadth-first from a resolved seed, bounded depth, filtered by relation,
+    carrying the traversed edge's own source line so every row has somewhere
+    to click rather than the definition line of the node. graphify walks a
+    symbol-level graph built from tree-sitter ASTs; this walks a file-level
+    import graph built from line patterns, which is a fraction of the
+    machinery and degrades far more slowly, because an import line changes
+    much less often than a function body.
+
   graphify/serve.py serve_http
     -> the serve subcommand in scripts/context-graph.sh
     Bind loopback by default and warn loudly and specifically before binding
@@ -185,10 +196,28 @@ What was deliberately not taken
 Recorded because the reasons are the interesting part, and because someone
 will otherwise propose them again.
 
-  The code index (extract.py, ~380KB, forty tree-sitter grammars).
-    This plugin does not index code, on purpose. Code structure is in the
-    code and an agent can read it. What context-graph maps is the context
-    layout, which is the part nothing else can see.
+  The symbol-level code index (extract.py, ~380KB, forty tree-sitter
+  grammars, six separate resolver modules).
+    A file-level import graph was taken instead - scripts/code-graph.awk,
+    reachable as /blast-radius and as /context-graph --code. It answers
+    "which file depends on which file" rather than "which function calls
+    which function", which is most of the value of the symbol index for a
+    small fraction of its cost, and it stays true for longer.
+
+    The symbol level is where graphify's expense and fragility both live.
+    251 of 2072 lines in its changelog concern resolution, dangling edges or
+    missed calls - roughly one release in eight is a correction to an edge
+    that was drawn wrong or not drawn at all. The cases that need a resolver
+    the most (dynamic dispatch, DI containers, reflection) are the ones it
+    can only guess at, and a wrong edge in an impact report is worse than a
+    missing one: a missing edge makes you look further, a wrong one makes
+    you stop looking.
+
+    The surrounding apparatus was declined with it: the semantic cache, the
+    watch daemon, the git merge driver for the graph file, and the
+    post-commit and post-checkout hooks. All of that exists to stop a
+    symbol index going stale between edits. A file-level graph rebuilds in
+    one awk pass, so it is rebuilt on every run instead.
 
   benchmark.py, and the token-reduction figure it prints.
     Its baseline is `corpus_words = nodes * 50` whenever a real word count is

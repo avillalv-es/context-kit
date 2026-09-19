@@ -328,7 +328,7 @@ END {
       if (g == "**" || g == "**/*" || g == "*" || g == "**/**") catchall = 1
       re = globre(g)
       hits = 0
-      for (k = 1; k <= nfiles; k++) if (repofile[k] ~ re) hits++
+      for (k = 1; k <= nfiles; k++) if (repofile[k] ~ re) { hits++; covered[repofile[k]] = 1 }
       gid = "path:" g
       addnode(gid, g, "path", "", 2)
       pathhits[gid] = hits
@@ -393,6 +393,85 @@ END {
     close(events)
   }
 
+  # --- code layer -----------------------------------------------------------
+  # Only the load-bearing modules. A real app has thousands of source files
+  # and drawing them all produces a hairball that answers nothing; what the
+  # LAYOUT graph wants to show is which modules everything flows through, so
+  # the code layer is capped by fan-in. blast-radius reads the full,
+  # uncapped edge list separately - the cap is a display decision, not a
+  # data one.
+  if (imports != "") {
+    while ((getline iline < imports) > 0) {
+      if (iline == "") continue
+      split(iline, IE, "\t")
+      isrc = IE[1]; idst = IE[2]
+      if (isrc == "" || idst == "" || isrc == idst) continue
+      nimp++
+      fanin[idst]++
+      fanout[isrc]++
+      impsrc[nimp] = isrc; impdst[nimp] = idst; impconf[nimp] = IE[5]
+      if (!(isrc in modseen)) { modseen[isrc] = 1; modlist[++nmod] = isrc }
+      if (!(idst in modseen)) { modseen[idst] = 1; modlist[++nmod] = idst }
+    }
+    close(imports)
+
+    if (codecap == "" || codecap + 0 < 1) codecap = 120
+    # Rank by total degree, then by path so the selection is stable between
+    # runs on an unchanged repo.
+    for (i = 1; i <= nmod; i++) {
+      m = modlist[i]
+      score[m] = fanin[m] + fanout[m]
+    }
+    nkeep = 0
+    for (i = 1; i <= nmod; i++) {
+      m = modlist[i]
+      # Always keep a module the activity ledger touched or a rule claims -
+      # those are the ones the layout has an opinion about.
+      if (score[m] >= 1 || (m in touched) || (m in covered)) { keep[++nkeep] = m }
+    }
+    # Insertion sort by score desc, path asc. nkeep is capped by the repo's
+    # module count; this runs once.
+    for (i = 2; i <= nkeep; i++) {
+      tmpv = keep[i]
+      for (j = i - 1; j >= 1; j--) {
+        a = keep[j]
+        if (score[a] > score[tmpv] || (score[a] == score[tmpv] && a < tmpv)) break
+        keep[j + 1] = a
+      }
+      keep[j + 1] = tmpv
+    }
+    nshown = (nkeep < codecap) ? nkeep : codecap
+    for (i = 1; i <= nshown; i++) {
+      m = keep[i]
+      mid = "module:" m
+      shown[m] = 1
+      if (!(mid in nodeidx)) {
+        k = addnode(mid, basename(m), "module", m, 0)
+        nfanin[k] = fanin[m] + 0
+      }
+    }
+    for (j = 1; j <= nimp; j++) {
+      if (!(impsrc[j] in shown) || !(impdst[j] in shown)) continue
+      addedge("module:" impsrc[j], "module:" impdst[j], "imports",
+              (impconf[j] == "INFERRED") ? "INFERRED" : "EXTRACTED")
+    }
+    if (nkeep > nshown)
+      dropped_modules = nkeep - nshown
+
+    # The cross-layer question, and the only one neither grep nor a code
+    # index can answer on its own: which modules is everything leaning on,
+    # with no tier-2 rule written for them?
+    nhot = 0
+    for (i = 1; i <= nshown && i <= 25; i++) {
+      m = keep[i]
+      if (fanin[m] < 3) continue
+      if (m in covered) continue
+      addissue("module:" m,
+        fanin[m] " files import this and no rule covers it - conventions for a module this load-bearing are worth writing down")
+      nhot++
+    }
+  }
+
   # --- layout findings ------------------------------------------------------
   for (i = 1; i <= ncount; i++) {
     id = nid[i]
@@ -433,6 +512,7 @@ END {
     printf "    {\"id\": \"%s\", \"label\": \"%s\", \"kind\": \"%s\", \"tier\": %d, \"path\": \"%s\", \"lines\": %d, \"bytes\": %d, \"degree\": %d",
       jesc(nid[i]), jesc(nlabel[i]), jesc(nkind[i]), ntier[i], jesc(npath[i]), nlines[i], nbytes[i], ndeg[i]
     if (nkind[i] == "path") printf ", \"matches\": %d", pathhits[nid[i]] + 0
+    if (nkind[i] == "module") printf ", \"fanin\": %d", nfanin[i] + 0
     if (ndesc[i] != "") printf ", \"description\": \"%s\"", jesc(ndesc[i])
     if (nissue[i] != "") printf ", \"issue\": \"%s\"", jesc(nissue[i])
     printf "}%s\n", (i < ncount ? "," : "")
@@ -450,7 +530,8 @@ END {
     printf "    {\"node\": \"%s\", \"text\": \"%s\"}%s\n", jesc(IS[1]), jesc(IS[2]), (j < icount ? "," : "")
   }
   printf "  ],\n"
-  printf "  \"stats\": {\"nodes\": %d, \"edges\": %d, \"issues\": %d, \"repo_files\": %d, \"tier1_lines\": %d}\n",
-    ncount, ecount, icount, nfiles, (root_id != "" ? nlines[nodeidx[root_id]] : 0)
+  printf "  \"stats\": {\"nodes\": %d, \"edges\": %d, \"issues\": %d, \"repo_files\": %d, \"tier1_lines\": %d, \"modules\": %d, \"modules_hidden\": %d, \"import_edges\": %d}\n",
+    ncount, ecount, icount, nfiles, (root_id != "" ? nlines[nodeidx[root_id]] : 0),
+    nshown + 0, dropped_modules + 0, nimp + 0
   print "}"
 }

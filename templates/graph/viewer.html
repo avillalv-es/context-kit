@@ -18,6 +18,7 @@
     --k-skill: #8256c4; --k-command: #0d7a8c; --k-agent: #b4530a;
     --k-finding: #7a6f00; --k-path: #8c92a0; --k-file: #a0a6b0;
     --k-doc: #5c6370; --k-session: #c2185b; --k-hook: #444c56;
+    --k-module: #1b7f5a;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
@@ -27,6 +28,7 @@
       --k-skill: #b58bf0; --k-command: #3fc4d8; --k-agent: #f0a15c;
       --k-finding: #d4c84a; --k-path: #7b828f; --k-file: #6a7280;
       --k-doc: #8b93a1; --k-session: #f06292; --k-hook: #8b96a5;
+      --k-module: #3ddc97;
     }
   }
   :root[data-theme="dark"] {
@@ -36,6 +38,7 @@
     --k-skill: #b58bf0; --k-command: #3fc4d8; --k-agent: #f0a15c;
     --k-finding: #d4c84a; --k-path: #7b828f; --k-file: #6a7280;
     --k-doc: #8b93a1; --k-session: #f06292; --k-hook: #8b96a5;
+    --k-module: #3ddc97;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; }
@@ -164,12 +167,12 @@ __CONTEXT_GRAPH_DATA__
   }
 
   var KIND_ORDER = ["tier1", "rule", "path", "knowledge", "skill", "command",
-                    "agent", "finding", "doc", "file", "session", "hook"];
+                    "agent", "finding", "doc", "module", "file", "session", "hook"];
   var KIND_LABEL = {
     tier1: "tier 1 (always loaded)", rule: "tier 2 rule", path: "path it claims",
     knowledge: "tier 3 knowledge", skill: "tier 3 skill", command: "command",
     agent: "agent", finding: "finding", doc: "cited doc", file: "touched file",
-    session: "session", hook: "hook"
+    session: "session", hook: "hook", module: "code module"
   };
   function kindColor(k) {
     return getComputedStyle(document.documentElement)
@@ -179,7 +182,7 @@ __CONTEXT_GRAPH_DATA__
   var nodes = G.nodes.map(function (n) {
     return {
       id: n.id, label: n.label, kind: n.kind, tier: n.tier, path: n.path,
-      lines: n.lines, bytes: n.bytes, matches: n.matches,
+      lines: n.lines, bytes: n.bytes, matches: n.matches, fanin: n.fanin,
       description: n.description, issue: n.issue, degree: n.degree || 0,
       x: 0, y: 0, vx: 0, vy: 0, pinned: false, hidden: false, dim: false
     };
@@ -425,6 +428,7 @@ __CONTEXT_GRAPH_DATA__
     if (n.tier) out.push('<div class="row"><b>Tier</b><span>' + n.tier + "</span></div>");
     if (n.lines) out.push('<div class="row"><b>Lines</b><span>' + n.lines + "</span></div>");
     if (n.matches !== undefined) out.push('<div class="row"><b>Matches</b><span>' + n.matches + " file" + (n.matches === 1 ? "" : "s") + "</span></div>");
+    if (n.fanin !== undefined) out.push('<div class="row"><b>Imported by</b><span>' + n.fanin + " file" + (n.fanin === 1 ? "" : "s") + "</span></div>");
     if (n.description) out.push('<div class="row"><b>Fires on</b><span>' + esc(n.description) + "</span></div>");
     if (n.issue) out.push('<div class="issue" style="margin-top:8px">' + esc(n.issue) + "</div>");
     var nb = [];

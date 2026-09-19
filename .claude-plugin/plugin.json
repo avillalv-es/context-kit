@@ -2,7 +2,7 @@
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "context-kit",
   "description": "A three-tier context layout plus a lean execution ruleset, for any coding project. Bootstraps CLAUDE.md on first session, injects a short reuse-first ruleset into every session and subagent, captures repeatable procedures as skills on its own, and audits the layout with /context-init. Use when setting up, trimming, tiering or reorganizing a project's context, or when Claude is being wasteful.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "author": { "name": "avillalv-es" },
   "homepage": "https://github.com/avillalv-es/context-kit",
   "keywords": [

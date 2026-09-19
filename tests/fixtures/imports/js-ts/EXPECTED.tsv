@@ -1,0 +1,21 @@
+# Expected import edges for the js-ts fixture.
+# from<TAB>to, one per line. scripts/check.sh asserts this set exactly:
+# a missing line is an edge the extractor stopped finding, an extra line
+# is an edge it invented. Both are regressions.
+#
+# Regenerate deliberately, never reflexively - the point of the file is
+# that it does not move when the extractor changes.
+scripts/build.mjs	src/lib/constants.ts
+src/app.tsx	src/components/Button.tsx
+src/app.tsx	src/hooks/useData.ts
+src/app.tsx	src/lib/format.ts
+src/app.tsx	src/lib/index.ts
+src/components/Button.tsx	src/lib/constants.ts
+src/components/Button.tsx	src/lib/format.ts
+src/hooks/useData.ts	src/lib/index.ts
+src/index.ts	src/app.tsx
+src/index.ts	src/lib/constants.ts
+src/index.ts	src/lib/index.ts
+src/legacy/loader.cjs	src/legacy/config.cjs
+src/lib/index.ts	src/lib/constants.ts
+src/lib/index.ts	src/lib/format.ts
