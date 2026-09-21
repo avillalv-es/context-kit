@@ -218,6 +218,64 @@ else
   pass "only reading commands contribute reads"
 fi
 
+# A pattern operand is not a file, even when a file of that name exists.
+ev '{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"grep -n sub/read-me.txt sub/read-me.txt"}}'
+if [ "$(grep -c 'sub/read-me.txt' "$EV" 2>/dev/null)" = "2" ]; then
+  pass "a grep pattern is not recorded even when it names a real file"
+else
+  fail "grep recorded its pattern as a read"
+fi
+
+# A redirect target is written, not read, and the ledger has a kind for that.
+: > "$TMP/proj/sub/out.txt"
+ev '{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"cat sub/read-me.txt > sub/out.txt"}}'
+if grep -q 'out.txt' "$EV" 2>/dev/null; then
+  fail "a redirect target was recorded as a read"
+else
+  pass "a redirect target is not recorded as a read"
+fi
+
+# sed -i rewrites the file; that is a write.
+ev '{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"sed -i s/a/b/ sub/out.txt"}}'
+if grep -q 'out.txt' "$EV" 2>/dev/null; then
+  fail "sed -i was recorded as a read"
+else
+  pass "an in-place edit is not recorded as a read"
+fi
+
+# A resolvable cd moves the base; an unresolvable one must stop the walk
+# rather than resolve later paths against the wrong root.
+ev '{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"cd sub && cat read-me.txt"}}'
+if grep -q 'sub/read-me.txt' "$EV" 2>/dev/null; then
+  pass "a cd moves the base for later paths"
+else
+  fail "a cd did not move the base"
+fi
+ev '{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"cd $SOMEWHERE && cat read-me.txt"}}'
+if grep -q '	read-me.txt$' "$EV" 2>/dev/null; then
+  fail "an unresolvable cd still resolved a later path"
+else
+  pass "an unresolvable cd stops the walk"
+fi
+
+# --- 7f. /lean only fires on a whole message -------------------------------
+# The case arms are exact matches, and the ps1 compares the trimmed whole
+# string - but the old decoder cut the prompt at its first newline, so a
+# multi-line message starting "/lean off" switched the level. That was a
+# silent divergence between the two shells.
+md() { printf '%s' "$1" | CLAUDE_PLUGIN_ROOT="$PWD" CLAUDE_PLUGIN_DATA="$TMP/data" \
+       CLAUDE_PROJECT_DIR="$TMP/proj" sh hooks/context-kit.sh mode 2>/dev/null; }
+if [ -n "$(md '{"prompt":"/lean off"}')" ]; then
+  pass "/lean off on its own still switches the level"
+else
+  fail "/lean off stopped working"
+fi
+if [ -z "$(md '{"prompt":"/lean off\nand then do the thing"}')" ]; then
+  pass "/lean off followed by a request does not switch the level"
+else
+  fail "a multi-line prompt switched the level"
+fi
+
 # --- 7d. rotation keeps what the graph reasons about ------------------------
 # context-graph.awk calls a skill "never invoked in the recorded activity"
 # from whatever survived rotation, so evicting skill events invents findings.

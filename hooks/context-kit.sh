@@ -385,8 +385,32 @@ read_paths() {
     # inside the project. do_event relativizes only ABSOLUTE paths, so without
     # this a relative ../../etc/passwd would reach the ledger verbatim and
     # walk straight past the guard that rejects the absolute form.
+    function scriptfirst(w) {
+      return (w=="sed"||w=="awk"||w=="gawk"||w=="mawk"||w=="grep"||
+              w=="egrep"||w=="fgrep"||w=="rg"||w=="ag")
+    }
+    # Reject what read_paths can rule out on sight; [ -f ] does the rest.
+    function emit(tok,   r) {
+      if (tok ~ /^[A-Za-z_][A-Za-z0-9_]*=/) return
+      if (index(tok, "$") > 0) return
+      if (tok ~ /^[0-9]+$/) return
+      r = norm(tok)
+      if (r != "") print r
+    }
+    function norm_abs(p,   n, parts, out, i, k, res) {
+      n = split(p, parts, "/")
+      k = 0
+      for (i = 1; i <= n; i++) {
+        if (parts[i] == "" || parts[i] == ".") continue
+        if (parts[i] == "..") { if (k > 0) k--; else return ""; continue }
+        k++; out[k] = parts[i]
+      }
+      res = ""
+      for (i = 1; i <= k; i++) res = res "/" out[i]
+      return res
+    }
     function norm(p,   n, parts, out, i, k, res) {
-      if (substr(p, 1, 1) != "/") p = proj "/" p
+      if (substr(p, 1, 1) != "/") p = base "/" p
       n = split(p, parts, "/")
       k = 0
       for (i = 1; i <= n; i++) {
@@ -404,8 +428,12 @@ read_paths() {
       gsub(/["'"'"']/, " ", buf)
       for (r = 0; r < 8; r++) { if (!gsub(/\$\([^()]*\)/, " ", buf)) break }
       gsub(/`[^`]*`/, " ", buf)
+      # Give redirect operators their own token so `cat a>b` parses like
+      # `cat a > b`.
+      gsub(/[0-9]*>>?|</, " & ", buf)
+      base = proj
       ns = split(buf, seg, /[|;&\n]+/)
-      for (s = 1; s <= ns; s++) {
+      for (s = 1; s <= ns && !stop; s++) {
         n = split(seg[s], t, /[ \t]+/)
         i = 1
         while (i <= n) {
@@ -422,17 +450,48 @@ read_paths() {
         }
         if (i > n) continue
         exe = tolower(t[i]); sub(/.*\//, "", exe); sub(/\.exe$/, "", exe)
+
+        # A cd moves the base for everything after it. One we cannot resolve
+        # ends the walk: every later relative path would be measured from
+        # the wrong root, and a wrong path is worse than a missing one.
+        if (exe == "cd") {
+          arg = ""
+          for (j = i + 1; j <= n; j++) if (t[j] != "") { arg = t[j]; break }
+          if (arg == "" || index(arg, "$") > 0) { stop = 1; break }
+          base = norm_abs(substr(arg, 1, 1) == "/" ? arg : base "/" arg)
+          if (base == "") { stop = 1; break }
+          continue
+        }
         if (is_preamble(exe) || !is_reader(exe)) continue
+
+        pend = ""; skipnext = 0; nop = 0; sawpat = 0; noread = 0
         for (j = i + 1; j <= n; j++) {
           tok = t[j]
           if (tok == "") continue
-          if (substr(tok, 1, 1) == "-") continue
-          if (substr(tok, 1, 1) == "<" || substr(tok, 1, 1) == ">") continue
-          if (tok ~ /^[A-Za-z_][A-Za-z0-9_]*=/) continue
-          if (index(tok, "$") > 0) continue
-          if (tok ~ /^[0-9]+$/) continue
-          p = norm(tok)
-          if (p != "") print p
+          # Redirects were pre-spaced into tokens of their own above.
+          if (tok ~ /^[0-9]*>>?$/) { pend = "w"; continue }
+          if (tok == "<") { pend = "r"; continue }
+          if (pend == "w") { pend = ""; continue }   # a > target is written
+          if (pend == "r") { pend = ""; emit(tok); continue }
+          if (substr(tok, 1, 1) == "-") {
+            # -e supplies the pattern, so the first operand stops being one.
+            if (tok == "-e" || tok == "--regexp") { sawpat = 1; skipnext = 1 }
+            # -f supplies it from a file, and that file really is read.
+            else if (tok == "-f" || tok == "--file") { sawpat = 1; pend = "r" }
+            else if (tok ~ /^--(regexp|file)=/) sawpat = 1
+            # sed -i rewrites in place. That is a write, and the ledger
+            # already has a kind for writes.
+            else if (exe == "sed" && tok ~ /^-[A-Za-z]*i/) noread = 1
+            continue
+          }
+          if (skipnext) { skipnext = 0; continue }
+          nop++
+          if (noread) continue
+          # For these the first bare operand is a regex or a program, not a
+          # file - and `grep -n README.md check.sh` would otherwise record
+          # the pattern purely because a file of that name happens to exist.
+          if (scriptfirst(exe) && !sawpat && nop == 1) continue
+          emit(tok)
         }
       }
     }
@@ -610,6 +669,10 @@ append_event() {
 # rotation could manufacture that finding. Reads are both the bulk and the
 # most disposable, so they are what gets dropped.
 rotate_events() {
+  # The redirect below fails in the shell, not in wc, so 2>/dev/null on wc
+  # would not silence it - and a hook that writes to stderr taints every
+  # tool call it runs on.
+  [ -f "$EVFILE" ] || return 0
   LINES="$(wc -l < "$EVFILE" 2>/dev/null | tr -d ' ')"
   [ -n "$LINES" ] || return 0
   [ "$LINES" -gt 4000 ] 2>/dev/null || return 0
