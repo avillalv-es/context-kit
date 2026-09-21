@@ -33,6 +33,11 @@ Anything classified `skill:` is a capture candidate — hand those to the
 
 Then flag separately:
 - Anything duplicated across tiers.
+- `CLAUDE.md` naming individual `knowledge/` files instead of one line
+  pointing at `knowledge/INDEX.md`. This is the same duplication as any
+  other cross-tier repeat, just easy to miss because it looks like routing
+  rather than restating — B1 already asked whether `INDEX.md` lists each
+  file; ask the reverse too, whether `CLAUDE.md` lists them a second time.
 - Rules files with no `paths` field, which are loading unconditionally.
 - Any description written as a capability statement rather than a trigger
   condition, since those will not fire.

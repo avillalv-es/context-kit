@@ -66,6 +66,23 @@ function addedge(src, dst, rel, conf,   key) {
   ndeg[nodeidx[dst]]++
 }
 
+# Resolves a reference written in file `src` to a real path: project-root
+# first (the common case in a CLAUDE.md routing table), falling back to
+# directory-relative to the file that names it. Returns "" for plain text
+# with no repo-relative meaning.
+function resolve_candidate(src, t,   cand, d) {
+  sub(/^\.\//, "", t)
+  cand = t
+  if (!(cand in bypath) && !(cand in isrepofile)) {
+    d = npath[nodeidx[src]]
+    sub(/[^\/]*$/, "", d)
+    cand = d t
+    while (sub(/[^\/]*\/\.\.\//, "", cand)) { }
+    sub(/^\.\//, "", cand)
+  }
+  return cand
+}
+
 # Translate a paths: glob into an ERE. POSIX awk has no fnmatch, and the
 # difference between `src/*` and `src/**` is the whole point of tier 2 - a
 # glob that silently matches everything is a tier-1 entry wearing a costume.
@@ -166,7 +183,14 @@ function scanfile(path,   line, infm, fmdone, inlist, listkey, k, v, rest, m, tm
       body_links = body_links v "\n"
     }
     tmp = line
-    while (match(tmp, /`[A-Za-z0-9][A-Za-z0-9_.\/-]*`/)) {
+    # The leading character used to be restricted to [A-Za-z0-9], which
+    # can never match a dotfile path - and every rule, skill, command and
+    # agent in this whole system lives under .claude/. A CLAUDE.md routing
+    # table almost always writes `.claude/rules/10-api.md`, not a markdown
+    # link, so that restriction meant the single most common reference in
+    # this ecosystem was silently uncaptured. Widened to allow a leading
+    # `.` or `/` too, matching the @-reference pattern above.
+    while (match(tmp, /`[A-Za-z0-9._\/][A-Za-z0-9_.\/-]*`/)) {
       v = substr(tmp, RSTART + 1, RLENGTH - 2)
       tmp = substr(tmp, RSTART + RLENGTH)
       body_refs = body_refs v "\n"
@@ -289,20 +313,7 @@ END {
     for (j = 1; j <= n; j++) {
       t = L[j]
       if (t == "") continue
-      sub(/^\.\//, "", t)
-      # A link is written relative to the file it sits in, but a project-root
-      # path is just as common in a CLAUDE.md. Try the root-relative reading
-      # first and keep it if it resolves - overwriting it with the
-      # directory-relative form loses every link a nested rule makes to a
-      # top-level doc.
-      cand = t
-      if (!(cand in bypath) && !(cand in isrepofile)) {
-        d = npath[nodeidx[src]]
-        sub(/[^\/]*$/, "", d)
-        cand = d t
-        while (sub(/[^\/]*\/\.\.\//, "", cand)) { }
-        sub(/^\.\//, "", cand)
-      }
+      cand = resolve_candidate(src, t)
       if (cand in bypath) {
         if (bypath[cand] != src) addedge(src, bypath[cand], "routes_to", "EXTRACTED")
       } else if (cand in isrepofile) {
@@ -349,6 +360,14 @@ END {
   # --- mentions: a file names a skill or command out loud -------------------
   # Exact line match against the collected references, never a substring:
   # `lean-review` must not also count as a mention of `lean`.
+  #
+  # A backtick span and a bare `/word` fragment land in the same pool, and
+  # only the span can ever be a file path - a bare fragment is a slug with no
+  # slash, by construction. The routing table a CLAUDE.md actually writes is
+  # almost always `` `.claude/rules/10-api.md` ``, not a markdown link, so a
+  # candidate that looks path-shaped is also tried against the real paths -
+  # same resolution as an explicit link, one rung lower in confidence because
+  # a code span is formatting, not syntax that promises a reference.
   for (src in refsrc) {
     n = split(refsrc[src], R, "\n")
     for (j = 1; j <= n; j++) {
@@ -359,6 +378,16 @@ END {
       }
       if (t in commandname && commandname[t] != src) {
         addedge(src, commandname[t], "mentions", "INFERRED")
+      }
+      if (t ~ /\// || t ~ /\.md$/) {
+        cand = resolve_candidate(src, t)
+        if (cand in bypath) {
+          if (bypath[cand] != src) addedge(src, bypath[cand], "routes_to", "INFERRED")
+        } else if (cand in isrepofile) {
+          did = "doc:" cand
+          addnode(did, basename(cand), "doc", cand, 0)
+          addedge(src, did, "cites", "INFERRED")
+        }
       }
     }
   }
