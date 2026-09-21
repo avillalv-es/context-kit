@@ -125,6 +125,26 @@ if [ -s "$TMP/data/events/$(printf '%s' "$TMP/proj" | cksum | cut -d' ' -f1).tsv
 else
   fail "hook event recorded nothing"
 fi
+# The same escape wearing a relative hat. The old guard had one arm for
+# "under the project" and one for "absolute and elsewhere", and a relative
+# path matched neither, so it was written to the ledger verbatim - past the
+# check immediately below, which only ever saw the absolute form.
+printf '%s' '{"session_id":"s1","hook_event_name":"PostToolUse","tool_name":"Read","tool_input":{"file_path":"../../etc/passwd"}}' \
+  | CLAUDE_PLUGIN_ROOT="$PWD" CLAUDE_PLUGIN_DATA="$TMP/data" CLAUDE_PROJECT_DIR="$TMP/proj" sh hooks/context-kit.sh event >/dev/null 2>&1
+if grep -q 'passwd' "$TMP/data/events/"*.tsv 2>/dev/null; then
+  fail "a relative file_path escaped the project and was recorded"
+else
+  pass "a relative file_path climbing out of the project is rejected"
+fi
+# An in-project relative path must still be recorded, unchanged.
+printf '%s' '{"session_id":"s1","hook_event_name":"PostToolUse","tool_name":"Read","tool_input":{"file_path":"a.py"}}' \
+  | CLAUDE_PLUGIN_ROOT="$PWD" CLAUDE_PLUGIN_DATA="$TMP/data" CLAUDE_PROJECT_DIR="$TMP/proj" sh hooks/context-kit.sh event >/dev/null 2>&1
+if grep -q '	a.py$' "$TMP/data/events/"*.tsv 2>/dev/null; then
+  pass "an in-project relative file_path is recorded as given"
+else
+  fail "an in-project relative file_path was dropped"
+fi
+
 # A read outside the project is not ours to record.
 printf '%s' '{"session_id":"s1","hook_event_name":"PostToolUse","tool_name":"Read","tool_input":{"file_path":"/etc/passwd"}}' \
   | CLAUDE_PLUGIN_ROOT="$PWD" CLAUDE_PLUGIN_DATA="$TMP/data" CLAUDE_PROJECT_DIR="$TMP/proj" sh hooks/context-kit.sh event >/dev/null 2>&1
@@ -132,6 +152,203 @@ if grep -q 'passwd' "$TMP/data/events/"*.tsv 2>/dev/null; then
   fail "hook event recorded a file outside the project"
 else
   pass "hook event ignores files outside the project"
+fi
+
+# --- 7b. the JSON decoder ---------------------------------------------------
+# The old json_field was a lone sed whose capture class stopped at the first
+# backslash. Against 1,050 real bash commands it truncated 816 of them, and
+# every fixture here was quote-free, which is exactly why nobody noticed.
+EV="$TMP/data/events/$(printf '%s' "$TMP/proj" | cksum | cut -d' ' -f1).tsv"
+# Sourcing the hook would run its dispatch and exit, so lift the function out.
+sed -n '/^json_field() {/,/^}$/p' hooks/context-kit.sh > "$TMP/jf.sh"
+jf() { ( . "$TMP/jf.sh"; json_field "$1" ) 2>/dev/null; }
+
+DEC=$(printf '%s' '{"tool_input":{"command":"grep -n \"foo bar\" a.py"}}' | jf tool_input.command)
+if [ "$DEC" = 'grep -n "foo bar" a.py' ]; then
+  pass "decoder keeps a command past its first escaped quote"
+else
+  fail "decoder truncated an escaped quote: got [$DEC]"
+fi
+
+DEC=$(printf '%s' '{"tool_input":{"command":"set -e\ncd /tmp"}}' | jf tool_input.command | tr '\n' '|')
+if [ "$DEC" = 'set -e|cd /tmp|' ]; then
+  pass "decoder expands an escaped newline"
+else
+  fail "decoder mishandled \\n: got [$DEC]"
+fi
+
+DEC=$(printf '%s' '{"a":"ABC"}' | jf a)
+if [ "$DEC" = "ABC" ]; then
+  pass "decoder resolves a \\uXXXX escape"
+else
+  fail "decoder mishandled \\uXXXX: got [$DEC]"
+fi
+
+# A decoy key of the same name must not win. The old sed matched "command"
+# anywhere in the payload, tool_response included, and preferred the last.
+DEC=$(printf '%s' '{"tool_response":{"command":"DECOY"},"tool_input":{"command":"REAL"}}' | jf tool_input.command)
+if [ "$DEC" = "REAL" ]; then
+  pass "decoder scopes a lookup to its key path"
+else
+  fail "decoder picked the wrong key: got [$DEC]"
+fi
+
+DEC=$(printf '%s' '{"a":"unterminated' | jf a)
+if [ -z "$DEC" ]; then
+  pass "decoder stays quiet on malformed JSON"
+else
+  fail "decoder emitted something for malformed input: [$DEC]"
+fi
+
+# --- 7c. bash reads reach the ledger ---------------------------------------
+# The matcher used to cover only the file tools, so across 24 measured agents
+# the ledger caught one read while the transcripts showed hundreds.
+mkdir -p "$TMP/proj/sub" 2>/dev/null
+: > "$TMP/proj/sub/read-me.txt"
+ev() { printf '%s' "$1" | CLAUDE_PLUGIN_ROOT="$PWD" CLAUDE_PLUGIN_DATA="$TMP/data" \
+       CLAUDE_PROJECT_DIR="$TMP/proj" sh hooks/context-kit.sh event >/dev/null 2>&1; }
+
+ev '{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"cat sub/read-me.txt"}}'
+if grep -q 'sub/read-me.txt' "$EV" 2>/dev/null; then
+  pass "a bash read reaches the ledger"
+else
+  fail "a bash read was not recorded"
+fi
+
+if [ "$(awk -F'\t' '$4=="sub/read-me.txt"' "$EV" 2>/dev/null | awk 'END{print NF}')" = "4" ]; then
+  pass "ledger rows carry exactly four columns"
+else
+  fail "ledger row is not four tab-separated columns"
+fi
+
+# Relative paths bypass the absolute-path guard unless they are normalized,
+# so this is the same escape as /etc/passwd wearing a different hat.
+ev '{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"cat ../../etc/passwd"}}'
+if grep -q 'passwd' "$EV" 2>/dev/null; then
+  fail "a relative path escaped the project and was recorded"
+else
+  pass "a relative path climbing out of the project is rejected"
+fi
+
+# Writing is not reading: recording `rm` as a read would be a lie.
+ev '{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"rm -rf sub"}}'
+if grep -q 'read.*sub$' "$EV" 2>/dev/null; then
+  fail "a non-reading command was recorded as a read"
+else
+  pass "only reading commands contribute reads"
+fi
+
+# A pattern operand is not a file, even when a file of that name exists.
+ev '{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"grep -n sub/read-me.txt sub/read-me.txt"}}'
+if [ "$(grep -c 'sub/read-me.txt' "$EV" 2>/dev/null)" = "2" ]; then
+  pass "a grep pattern is not recorded even when it names a real file"
+else
+  fail "grep recorded its pattern as a read"
+fi
+
+# A redirect target is written, not read, and the ledger has a kind for that.
+: > "$TMP/proj/sub/out.txt"
+ev '{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"cat sub/read-me.txt > sub/out.txt"}}'
+if grep -q 'out.txt' "$EV" 2>/dev/null; then
+  fail "a redirect target was recorded as a read"
+else
+  pass "a redirect target is not recorded as a read"
+fi
+
+# sed -i rewrites the file; that is a write.
+ev '{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"sed -i s/a/b/ sub/out.txt"}}'
+if grep -q 'out.txt' "$EV" 2>/dev/null; then
+  fail "sed -i was recorded as a read"
+else
+  pass "an in-place edit is not recorded as a read"
+fi
+
+# A resolvable cd moves the base; an unresolvable one must stop the walk
+# rather than resolve later paths against the wrong root.
+ev '{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"cd sub && cat read-me.txt"}}'
+if grep -q 'sub/read-me.txt' "$EV" 2>/dev/null; then
+  pass "a cd moves the base for later paths"
+else
+  fail "a cd did not move the base"
+fi
+ev '{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"cd $SOMEWHERE && cat read-me.txt"}}'
+if grep -q '	read-me.txt$' "$EV" 2>/dev/null; then
+  fail "an unresolvable cd still resolved a later path"
+else
+  pass "an unresolvable cd stops the walk"
+fi
+
+# --- 7f. /lean only fires on a whole message -------------------------------
+# The case arms are exact matches, and the ps1 compares the trimmed whole
+# string - but the old decoder cut the prompt at its first newline, so a
+# multi-line message starting "/lean off" switched the level. That was a
+# silent divergence between the two shells.
+md() { printf '%s' "$1" | CLAUDE_PLUGIN_ROOT="$PWD" CLAUDE_PLUGIN_DATA="$TMP/data" \
+       CLAUDE_PROJECT_DIR="$TMP/proj" sh hooks/context-kit.sh mode 2>/dev/null; }
+if [ -n "$(md '{"prompt":"/lean off"}')" ]; then
+  pass "/lean off on its own still switches the level"
+else
+  fail "/lean off stopped working"
+fi
+if [ -z "$(md '{"prompt":"/lean off\nand then do the thing"}')" ]; then
+  pass "/lean off followed by a request does not switch the level"
+else
+  fail "a multi-line prompt switched the level"
+fi
+
+# --- 7d. rotation keeps what the graph reasons about ------------------------
+# context-graph.awk calls a skill "never invoked in the recorded activity"
+# from whatever survived rotation, so evicting skill events invents findings.
+ROT="$TMP/rot.tsv"
+: > "$ROT"
+i=0
+while [ "$i" -lt 4200 ]; do
+  printf '%s\tread\ts1\tf%s.txt\n' "$i" "$i" >> "$ROT"
+  i=$((i + 1))
+done
+printf '%s\tskill\ts1\tcontext-cleanup\n' 9999 >> "$ROT"
+printf '%s\tagent\ts1\texplorer\n' 9999 >> "$ROT"
+sed -n '/^rotate_events() {/,/^}$/p' hooks/context-kit.sh > "$TMP/rot.sh"
+( . "$TMP/rot.sh"; EVFILE="$ROT"; rotate_events ) 2>/dev/null
+if grep -q 'context-cleanup' "$ROT" 2>/dev/null && grep -q 'explorer' "$ROT" 2>/dev/null; then
+  pass "rotation keeps agent and skill events"
+else
+  fail "rotation evicted the agent or skill events"
+fi
+if [ "$(wc -l < "$ROT" | tr -d ' ')" -lt 4000 ]; then
+  pass "rotation actually trims the ledger"
+else
+  fail "rotation did not trim"
+fi
+
+# --- 7e. the graph reads the ledger ----------------------------------------
+# This branch of context-graph.awk had no end-to-end coverage at all.
+GEV="$TMP/gev.tsv"
+printf '1\tread\ts1\tREADME.md\n2\tskill\ts1\tcontext-cleanup\n3\tagent\ts1\texplorer\n' > "$GEV"
+GJ=$(awk -f scripts/context-graph.awk -v root="$TMP/proj" -v events="$GEV" </dev/null 2>/dev/null)
+for want in '"kind": "session"' '"kind": "skill"' '"kind": "agent"' '"kind": "file"'; do
+  case "$GJ" in
+    *"$want"*) ;;
+    *) fail "graph lost $want from the ledger" ;;
+  esac
+done
+pass "graph builds session, skill, agent and file nodes from the ledger"
+
+# The activity layer had no cap while the code layer has had one since it
+# landed; bash reads make that difference matter.
+printf '' > "$GEV"
+i=0
+while [ "$i" -lt 200 ]; do
+  printf '1\tread\ts1\tf%s.txt\n' "$i" >> "$GEV"
+  printf '1\tread\ts1\tf%s.txt\n' "$i" >> "$GEV"
+  i=$((i + 1))
+done
+NF_=$(awk -f scripts/context-graph.awk -v root="$TMP/proj" -v events="$GEV" -v actcap=20 </dev/null 2>/dev/null \
+      | tr ',' '\n' | grep -c '"kind": "file"')
+if [ "$NF_" -le 20 ]; then
+  pass "activity layer honours actcap"
+else
+  fail "activity layer emitted $NF_ file nodes against a cap of 20"
 fi
 
 # --- 8. command signatures collapse wrapper forms --------------------------
@@ -163,6 +380,42 @@ else
   fail "npm run and npm ci did not stay distinct"
 fi
 
+# --- 8b. measure-repo picks tasks from history, and spots a routing miss ---
+# The point of this script is that it works on a real repo, where nobody gets
+# to choose which changes it is scored on. A smoke test against a throwaway
+# git history is enough to catch the two ways it can be wrong: sampling
+# nothing, and reporting a clean sweep when a commit matched no rule.
+MR="$TMP/mr"
+mkdir -p "$MR/base/src" "$MR/tier/.claude/rules"
+printf 'monolith line\n%.0s' $(seq 1 40) > "$MR/base/CLAUDE.md"
+printf 'router\n' > "$MR/tier/CLAUDE.md"
+printf 'paths:\n  - "src/**"\n---\nthe src rule\n' > "$MR/tier/.claude/rules/10-src.md"
+mkdir -p "$MR/tier/src"
+( cd "$MR/base" && git init -q . && printf 'a\n' > src/a.ts && printf 'b\n' > elsewhere.md &&
+  git add -A && git -c user.email=t@t -c user.name=t commit -qm init &&
+  printf 'aa\n' >> src/a.ts && git add -A && git -c user.email=t@t -c user.name=t commit -qm "covered" &&
+  printf 'bb\n' >> elsewhere.md && git add -A && git -c user.email=t@t -c user.name=t commit -qm "uncovered"
+) >/dev/null 2>&1
+MROUT=$(sh ab/measure-repo.sh "$MR/base" "$MR/tier" --commits 10 --out "$MR/out" 2>&1)
+# Two, not three: the root commit has no parent to diff against, so it
+# yields no file list and drops out.
+case "$MROUT" in
+  *"2 sampled"*) pass "measure-repo samples commits from history" ;;
+  *) fail "measure-repo did not sample the expected commits" ;;
+esac
+# The commit touching only elsewhere.md matches no rule; the one touching
+# src/a.ts does. A report of zero misses would mean the check cannot see them.
+case "$MROUT" in
+  *"routing misses  0 of"*) fail "measure-repo missed a commit that matched no rule" ;;
+  *"routing misses"*) pass "measure-repo counts commits that matched no rule" ;;
+  *) fail "measure-repo printed no routing-miss line" ;;
+esac
+if [ -f "$MR/out/repo-static.tsv" ]; then
+  pass "measure-repo writes its aggregate TSV"
+else
+  fail "measure-repo wrote no aggregate"
+fi
+
 # --- 9. the sh and ps1 twins handle the same actions -----------------------
 # They are registered for the same events, so an action one of them silently
 # drops is a feature that exists on Linux and not on Windows.
@@ -172,6 +425,42 @@ for A in session subagent mode signal event; do
   grep -q "'$A'" hooks/context-kit.ps1 2>/dev/null || { fail "ps1 hook does not handle '$A'"; PARITY=1; }
 done
 [ "$PARITY" -eq 0 ] && pass "sh and ps1 hooks handle the same actions"
+
+# Handling the same action names is not the same as agreeing on an answer.
+# Both twins parse commands and paths independently, so they can and did
+# drift: before this suite grew, sh switched the level on a multi-line
+# "/lean off" and ps1 did not. Run the real comparison wherever a PowerShell
+# exists, and say plainly when there is none rather than implying coverage.
+PWSH="${CONTEXT_KIT_PWSH:-$(command -v pwsh 2>/dev/null)}"
+if [ -n "$PWSH" ] && [ -x "$PWSH" ]; then
+  PP="$TMP/parity"; mkdir -p "$PP/sub"
+  : > "$PP/a.md"; : > "$PP/b.md"; : > "$PP/sub/c.md"
+  DRIFT=0
+  twin() { # $1 action, $2 payload, $3 which ledger column to compare
+    rm -rf "$TMP/p_sh" "$TMP/p_ps"
+    printf '%s' "$2" | CLAUDE_PLUGIN_DATA="$TMP/p_sh" CLAUDE_PROJECT_DIR="$PP" \
+      sh hooks/context-kit.sh "$1" >/dev/null 2>&1
+    printf '%s' "$2" | CLAUDE_PLUGIN_DATA="$TMP/p_ps" CLAUDE_PROJECT_DIR="$PP" \
+      "$PWSH" -NoLogo -NoProfile -File hooks/context-kit.ps1 "$1" >/dev/null 2>&1
+    A=$(cat "$TMP/p_sh/$3"/*.tsv 2>/dev/null | cut -f"$4" | sort | tr '\n' ' ')
+    B=$(cat "$TMP/p_ps/$3"/*.tsv 2>/dev/null | cut -f"$4" | sort | tr '\n' ' ')
+    [ "$A" = "$B" ] || { fail "sh and ps1 disagree on $5: sh=[$A] ps=[$B]"; DRIFT=1; }
+  }
+  twin event '{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"cat a.md b.md"}}' events 4 "a multi-file read"
+  twin event '{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"grep -n a.md b.md"}}' events 4 "a pattern that names a file"
+  twin event '{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"cat a.md > b.md"}}' events 4 "a redirect target"
+  twin event '{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"cd sub && cat c.md"}}' events 4 "a cd that moves the base"
+  twin event '{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"cat ../../etc/passwd"}}' events 4 "a path escaping the project"
+  twin event '{"session_id":"s1","tool_name":"Read","tool_input":{"file_path":"../../etc/passwd"}}' events 4 "a relative escaping file_path"
+  twin signal '{"tool_input":{"command":"cd /x && npm run build"}}' signals 1 "a cd-prefixed signature"
+  twin signal '{"tool_input":{"command":"set -e"}}' signals 1 "a scaffolding-only signature"
+  MA=$(printf '%s' '{"prompt":"/lean off\nplus more"}' | CLAUDE_PROJECT_DIR="$PP" sh hooks/context-kit.sh mode 2>/dev/null)
+  MB=$(printf '%s' '{"prompt":"/lean off\nplus more"}' | CLAUDE_PROJECT_DIR="$PP" "$PWSH" -NoLogo -NoProfile -File hooks/context-kit.ps1 mode 2>/dev/null)
+  [ "$MA" = "$MB" ] || { fail "sh and ps1 disagree on a multi-line /lean prompt"; DRIFT=1; }
+  [ "$DRIFT" -eq 0 ] && pass "sh and ps1 agree on signatures, read paths and mode"
+else
+  pass "sh/ps1 behaviour comparison skipped (no pwsh; set CONTEXT_KIT_PWSH to run it)"
+fi
 
 # --- 10. the graph builder emits parseable JSON ----------------------------
 GP="$TMP/gproj"

@@ -1,0 +1,97 @@
+src/domain/billing.ts|2
+# Billing rules
+
+## Money
+
+- `Charge.pence` is an integer. No `Money` class, no decimal.js — tried in 2024,
+  reverted: precision only matters at the single `Math.round` ending a charge line.
+- `Tariff.rate` is a float on purpose (`NUMERIC` in `002_tariffs.sql`); real rates
+  are fractional, e.g. 28.47 p/kWh. Round the product, never the inputs.
+- Nothing in `src/domain` emits pounds, and `getCharge` returns the pence verbatim.
+  An API field named `*_pounds` is a bug unless the API layer divides, for display.
+- `Tariff` has no unit field: `kind` decides whether `rate` is p/kWh or p/kVA/day,
+  so nothing in the types catches a capacity rate handed to the energy path.
+
+## Rounding order
+
+- Sum in Wh, convert to kWh once, then apply the rate. Rounding per reading drifts by pounds over a quarter.
+- One `Math.round` per charge line, at the very end. Fixed order, not taste:
+  ADR 001 traces three rounding bugs to converting more than once.
+- `Math.round` is half-up toward +∞, so it is asymmetric across zero:
+  `Math.round(-2.5) === -2`. Fine for charges, wrong for credit notes.
+
+Worked example — one quarter, fixed tariff, 4368 readings at 28.47 p/kWh:
+
+```
+sumWh      -> 1284617 Wh       exact, BIGINT
+toKwh      -> 1284.617 kWh     one conversion
+x rate     -> 36573.04599 p
+Math.round -> 36573 p          = £365.73
+```
+
+Rounded per line instead, the Q3 2024 run drifted £9.12 over one portfolio.
+
+## Standing charges
+
+- Per site per day, every day in the window, reading or no reading.
+- Day count comes from `daysBetween` on the window bounds — never from distinct
+  buckets, or a comms outage turns into a silent discount.
+- Its own charge line, rounded separately; folded into the energy line before
+  rounding it produces a customer query every single time.
+- `capacity` tariffs are pence per kVA per day: a standing charge in all but
+  name, multiplied by `sites.capacity_kva`, never by kWh.
+
+## VAT
+
+- Every pence figure in `src/domain` is net. A VAT constant in the domain is a bug.
+- Domestic 5%, business 20%. The split belongs to the customer account, not the
+  site and not the tariff; billing does not know it and must not learn it.
+- VAT applies to the invoice total after all net lines are summed, never per
+  line. The two differ by a penny or two and HMRC cares which you used.
+
+## Credit notes
+
+- A credit note is a negative-pence charge: re-run `chargeFor` over the corrected
+  period and subtract the original. Never mutate or delete an issued charge.
+- Round each side as a positive integer and subtract the integers — rounding a
+  negative product directly leaks a penny to the customer about half the time.
+- A correction is never a negative reading; `toReading` rejects `value < 0`.
+
+## Re-billing after a meter correction
+
+- A correction replaces buckets we already hold; `readings` is keyed on
+  `(site_id, bucket)`, so it has to be an upsert. `insertReadings` still issues a
+  bare `INSERT`, so today a correction collides with the primary key instead.
+- Re-bill the whole settlement window, not the corrected buckets. Partial
+  re-bills caused the March 2025 double-charge: two corrections in one window
+  each produced a delta against the original invoice and the overlap billed twice.
+- Always a credit note for the original plus a fresh charge; no adjust-in-place.
+
+## Estimated vs actual reads
+
+- Estimates are ordinary rows; there is no flag on `readings`, and the ingest job
+  records no provenance either. Adding a column for it needs an ADR.
+- An estimated read is billable; four consecutive estimated quarters is not.
+- An actual read arriving after an estimate is just a meter correction — same
+  upsert, same full-window re-bill, same credit note. Do not special-case it.
+
+## The settlement window
+
+- Half-open, `[from, to)`, matching `readingsForSite`. The last bucket of a
+  quarter belongs to the next window; every off-by-one began as an inclusive end.
+- UTC only (`lib/dates.ts`). A standing-charge day is 24 hours, so clock-change
+  days bill 23 or 25 hours of energy against one day of charge. Correct; queried twice.
+- Tariff selection uses the window's `to` instant, so a tariff starting mid-window
+  applies to the whole window. Split windows are not implemented; bill two windows.
+- An empty window is a £0 charge, not an error; a missing tariff is an error —
+  `chargeFor` throws `DomainError("no_tariff")` rather than reusing an expired rate.
+
+## Known divergences — intended rule above, actual code below
+
+| Rule | What the code does |
+| --- | --- |
+| ADR 002 precedence `capacity` > `timeOfUse` > `fixed` | `chargeFor` takes `active[0]`; silently undercharges on switch days |
+| Capacity is pence per kVA per day | `chargeFor` does `kwh * rate` for every kind; `capacity_kva` never reaches it |
+| Standing charges, VAT, credit notes | not implemented at all |
+| `toKwh` only at a presentation boundary (ADR 001) | `billing.ts` calls it inside the domain |
+| Corrections upsert on `(site_id, bucket)` | `insertReadings` is a plain `INSERT` with no `ON CONFLICT` |

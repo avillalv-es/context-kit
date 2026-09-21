@@ -1,0 +1,11 @@
+src/api/**|1
+# HTTP API
+- Every route is registered in `src/api/routes.ts` keyed `"METHOD /v1/path"`. A handler not in that map is unreachable.
+- Errors are RFC7807 problem+json, produced only by `problem()` in `src/api/middleware.ts`. Never construct an error body by hand.
+- Every handler calls `requireApiKey(req)` first, inside the try block, so an auth failure becomes a 401 problem document rather than a stack trace.
+- Handlers are `async (req: Req) => Promise<Res>`. They never throw; they catch and return `problem(e)`.
+- Energy in a response is kWh, converted with `toKwh`. A handler that returns `wh` has leaked a storage detail and will be billed on by a client.
+- Request bodies are validated by a function in `src/domain/validate.ts` before any use. Trusting `req.body` shape is how we shipped a 500 to a customer.
+- The API is versioned in the path. A breaking change means `/v2/`, never a silent change to a `/v1/` response shape.
+- Adding a field to a response is not breaking. Removing one, renaming one, or changing its unit is.
+- Status codes come from `DomainError.status`. Do not pass a literal status to a response.

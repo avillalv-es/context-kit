@@ -1,0 +1,7 @@
+src/domain/billing.ts|1
+# Billing
+- Charges are computed in integer pence. `Math.round` at the end, once, never per reading; rounding per reading drifts by pounds over a quarter.
+- Sum in Wh, convert to kWh once, then apply the rate. Converting per reading reintroduces the drift this ordering exists to prevent.
+- A period with no active tariff raises `DomainError("no_tariff")`. It never silently charges zero.
+- Billing never reads the database directly. It takes readings and tariffs as arguments so it stays unit-testable.
+- A change to charge arithmetic requires a test that asserts an exact pence figure, not an approximate one.

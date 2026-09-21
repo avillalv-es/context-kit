@@ -1,0 +1,6 @@
+src/workers/**|3
+# Workers
+- Workers are batch-oriented and idempotent. Re-running a batch must not double-count, which is why readings upsert on `(site_id, bucket)`.
+- Batch size comes from config, never a literal. A hard-coded batch size has taken the ingest queue down twice.
+- A worker logs one structured line per batch, not per row. Per-row logging at ingest volume is its own outage.
+- Workers never call API handlers. Shared logic moves into `src/domain/`.

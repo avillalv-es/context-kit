@@ -1,0 +1,6 @@
+task	arm	rep	touches	reads	writes	context_reads
+t1	a	2	20	20	0	8
+t1	b	1	1	1	0	1
+t1	b	2	1	1	0	1
+t2	b	2	1	1	0	1
+t2	b	3	9	9	0	4

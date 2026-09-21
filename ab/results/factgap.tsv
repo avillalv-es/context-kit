@@ -1,0 +1,5 @@
+task	facts_armB	facts_armA	gap	gap_pct
+T1-api	259	49	210	81
+T2-billing	259	44	215	83
+T3-db	259	46	213	82
+T4-worker	259	15	244	94

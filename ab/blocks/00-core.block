@@ -1,0 +1,9 @@
+*|1
+# Core
+- This service ingests half-hourly meter reads, rolls them up and bills them. Correctness of energy arithmetic outranks every other concern in this repo.
+- Energy is stored in **Wh** everywhere. Not kWh. The conversion happens once, at the edge, in `normalizeUnit`. See docs/adr/001-units.md.
+- Any value leaving the system over HTTP is converted with `toKwh` at the boundary. Returning a raw `wh` field is a bug, not a style choice.
+- All timestamps are UTC ISO-8601. Local time never enters the system, not even in logs.
+- Never log `mpan`, `meterSerial` or `customerRef`. `log()` redacts them; bypassing `log()` defeats that.
+- Run `npm run typecheck` and `npm test` before claiming a change works. Neither is optional.
+- The repo is strict TypeScript with `noUncheckedIndexedAccess`. An index access is possibly-undefined and the compiler means it.

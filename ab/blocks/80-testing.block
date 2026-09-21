@@ -1,0 +1,7 @@
+tests/**|2
+# Testing
+- Tests use the node:test runner and `node:assert/strict`. No test framework dependency.
+- One test file per module under test, named for the module.
+- Assert exact values. `assert.ok(x > 0)` on a charge calculation has caught nothing in this repo's history.
+- Domain tests construct inputs directly and never touch the database. If a test needs the database, the code under test is in the wrong layer.
+- A bug fix lands with a test that fails before the fix and passes after. A fix without one is not reviewable.

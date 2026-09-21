@@ -1,0 +1,89 @@
+*|3
+# Release and deployment
+
+Trains, not continuous deploy: this service produces the numbers that end up on
+invoices, so the calendar is built around settlement runs.
+
+## Release trains
+
+- Two trains a week, both UTC: **Tue 10:00** and **Thu 10:00**. Anything else
+  needs an incident number in the deploy ticket.
+- Cut from `main` at 09:00, an hour ahead. That hour is for the cutter to read
+  the whole diff; it is not for merging one more PR.
+- Bump `version` and tag `v<version>` at the cut; no major yet, minor is the train.
+- The only gates are `npm test` and `npm run typecheck`. There is deliberately
+  no `build` script here — the image build lives in the infra repo and pins
+  `target`/`module` itself, so a `tsconfig.json` change must land there too.
+- Boot proves little: `main()` loads config and logs `boot`, and nothing here
+  serves a health route. The first honest signal is an `ingest.batch` line.
+
+## Migrations before deploy, no exceptions
+
+- Forward-only numbered SQL, no runner, no `down`. You apply it by hand, forwards.
+- Apply migration, verify, *then* ship code. Never the reverse, never one step,
+  never "the deploy job does both".
+- With no `down`, schema change is expand/contract across three trains: N adds
+  the nullable column and dual-writes, N+1 reads it, N+2 drops the old one.
+- Do not compress that into two. `002_tariffs.sql` is why: table and read path
+  shipped together, untariffed sites hit `no_tariff`, charge 500'd all afternoon.
+- Keep them non-idempotent. Re-applying one fails loudly, and that failure is
+  all we have in place of a migrations table. Don't "fix" it.
+
+## Blue/green
+
+- Cut over drained, not live: `insertReadings` has no `ON CONFLICT` against the
+  `(site_id, bucket)` key, so the same half-hour landing on both colours is a
+  unique violation, and `ingestBatch` has no per-row catch — it costs the batch.
+- Rollup is read-only — safe in the data, noisy in the logs. Two `rollup.done`
+  per site during overlap is expected; don't alert on rollup counts mid-deploy.
+- Hold both colours one full `ROLLUP_INTERVAL_MS` before retiring the old one.
+- Never edit env on a running colour: `loadConfig()` re-reads `process.env` each
+  ingest batch, so a smaller `INGEST_BATCH_SIZE` silently slices the tail off the
+  next one, while `getDb()` fixed `DATABASE_URL` on first call and ignores you.
+
+## Rollback
+
+- Rollback is a colour switch, target under two minutes. Practise it quarterly.
+- Code rolls back; schema does not. Wanting to roll back a migration means you
+  wanted expand/contract and skipped it.
+- Nothing here persists money (`chargeFor` is pure, per request): a rollback
+  stops *new* wrong charges, not invoices already out. Tell billing ops first.
+- Never fix anything by changing the unit of a live API field — ADR 001 keeps Wh
+  inside and `toKwh` at the boundary, and a flipped unit breaks the rollback too.
+- Log keys are contract too: stdout is retained, so a new identifier-ish field
+  joins `REDACT` an **earlier** train than the code that logs it.
+
+## Feature flags
+
+- No flag registry, and `loadConfig` is the only env read in the service today.
+  Keep flags out of `Config`: raw `process.env` at the call site, `MF_FF_*`.
+- Off must mean today's behaviour. A flag that changes behaviour when unset has
+  already broken the rollback.
+- Never add a flag that throws in `loadConfig()` — it runs per ingest batch, so
+  a typo kills the feed mid-run instead of failing at boot.
+- No flags under `src/domain`: it is pure and its tests don't set env — read the
+  flag in `api/` or `workers/` and pass the decision in.
+- Flags die within two trains of rollout, deleted by whoever trips over one.
+
+## Settlement freeze
+
+| window | frozen |
+| --- | --- |
+| 18:00 day before a settlement run → sign-off | everything |
+| monthly billing run, working days 1–3 | `domain/`, `workers/`, migrations |
+| DCC provider change window | ingest and `validateRaw` |
+
+- Off-by-default flagged API changes still ship in a freeze. Anything touching
+  Wh, tariffs, buckets or rounding does not.
+- The DCC window is there because `validateRaw` throws on an unknown unit or a
+  non-MPAN `siteId`, and one such row costs the whole batch.
+- Sharp edge until it is fixed: `chargeFor` takes `active[0]` rather than the
+  ADR 002 precedence, so never schedule tariff work into a freeze week.
+
+## Fridays
+
+- No migrations, no `workers/`, no `domain/` on a Friday. Ever.
+- API-only flag-off changes may ship before 12:00 UTC. Nothing after.
+- From the bank-holiday incident: feeds catch up in bulk over a weekend and a
+  lost batch looks like a quiet one, so nobody notices until Monday.
+- "It's only config" is a Friday deploy. So is flipping a flag on. Both wait.

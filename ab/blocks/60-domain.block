@@ -1,0 +1,7 @@
+src/domain/**|2
+# Domain
+- `src/domain/` is pure. No database, no HTTP, no clock reads. Anything time-dependent takes an ISO string argument.
+- Domain functions throw `DomainError` subclasses. They never return error tuples or null-as-error.
+- `toReading` is the only way to construct a `Reading`. Building the object literal by hand skips validation and bucketing.
+- Bucketing is half-hourly, floor. A read at :07 belongs to :00, a read at :31 belongs to :30.
+- Validation rejects; it never coerces. A bad `siteId` is a 400, not a best-effort parse.

@@ -59,10 +59,125 @@ emit() {
   printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":"%s"}}\n' "$1" "$ESCAPED"
 }
 
-# Extract a flat string field from stdin JSON without jq. Best effort: a miss
-# yields an empty string, which every caller treats as "skip".
+# Extract a string field from stdin JSON without jq.
+#
+# The previous implementation was a single sed with the capture class
+# [^"\\]*, which stops at the first backslash or escaped quote. Measured
+# against 1,050 real Bash commands from agent transcripts, 816 of them (78%)
+# were truncated before the hook ever saw them, and 47 distinct commands
+# collapsed onto the prefix "set -e" - which reaches signature() as the
+# signature "set", passes THRESHOLD, and makes context-kit suggest a skill
+# for a shell builtin. It was also unanchored (a "command" key anywhere in
+# the payload matched, including inside tool_response) and greedy (with two
+# matches on one line the last one won).
+#
+# This is a real JSON scanner instead. Pass a bare key to take the first
+# match at any depth, or a dotted path like tool_input.command to scope it.
+# Only scalar string values are returned; a key whose value is an object,
+# array or number yields nothing, which every caller treats as "skip".
+# Malformed input yields nothing and exits 0 - a hook must never break a
+# session.
 json_field() {
-  sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\\([^\"\\\\]*\\).*/\\1/p" | head -1
+  awk -v want="$1" '
+    # %c means "this codepoint" in gawk and "this byte" in mawk and busybox
+    # awk, so one of them has to be told. WIDECHAR probes it with a literal
+    # that is two bytes of UTF-8 and one character; without this, mawk
+    # truncates \u2550 to its low byte and a box-drawing rule decodes as "P".
+    function emit(cp) {
+      if (cp < 128 || WIDECHAR) return sprintf("%c", cp)
+      if (cp < 2048) return sprintf("%c%c", 192 + int(cp / 64), 128 + (cp % 64))
+      if (cp < 65536) return sprintf("%c%c%c", 224 + int(cp / 4096),
+                                     128 + int((cp % 4096) / 64), 128 + (cp % 64))
+      return sprintf("%c%c%c%c", 240 + int(cp / 262144),
+                     128 + int((cp % 262144) / 4096),
+                     128 + int((cp % 4096) / 64), 128 + (cp % 64))
+    }
+    function hexval(h,   i, c, v, d) {
+      v = 0
+      for (i = 1; i <= length(h); i++) {
+        d = index("0123456789abcdef", tolower(substr(h, i, 1))) - 1
+        if (d < 0) return -1
+        v = v * 16 + d
+      }
+      return v
+    }
+    # Walks the JSON string whose opening quote is at s[i].
+    # decode=1 builds the value into STRVAL; decode=0 only finds the end,
+    # which keeps the scan linear over payloads we are going to discard.
+    # Sets STRNEXT past the closing quote. Returns 0 if it never closes.
+    function jstring(s, i, decode,   out, c, e, n, cp, lo) {
+      n = length(s); out = ""; i++
+      while (i <= n) {
+        c = substr(s, i, 1)
+        if (c == "\\") {
+          e = substr(s, i + 1, 1); i += 2
+          if (!decode) { if (e == "u") i += 4; continue }
+          if (e == "n") out = out "\n"
+          else if (e == "t") out = out "\t"
+          else if (e == "r") out = out "\r"
+          else if (e == "b") out = out sprintf("%c", 8)
+          else if (e == "f") out = out sprintf("%c", 12)
+          else if (e == "u") {
+            cp = hexval(substr(s, i, 4))
+            if (cp < 0) return 0
+            i += 4
+            # A high surrogate only means anything paired with its low half.
+            if (cp >= 55296 && cp <= 56319 && substr(s, i, 2) == "\\u") {
+              lo = hexval(substr(s, i + 2, 4))
+              if (lo >= 56320 && lo <= 57343) {
+                cp = 65536 + (cp - 55296) * 1024 + (lo - 56320)
+                i += 6
+              }
+            }
+            out = out emit(cp)
+          }
+          else out = out e   # \" \\ \/ and any unknown escape: keep the char
+          continue
+        }
+        if (c == "\"") { STRVAL = out; STRNEXT = i + 1; return 1 }
+        if (decode) out = out c
+        i++
+      }
+      return 0
+    }
+    function pathnow(   p, d) {
+      if (depth < 1) return ""
+      if (want !~ /\./) return key[depth]
+      p = key[1]
+      for (d = 2; d <= depth; d++) p = p "." key[d]
+      return p
+    }
+    # A JSON string cannot hold a raw newline, so every newline rejoined here
+    # is whitespace between tokens. Buffering is required: values may contain
+    # escaped newlines and the payload may be pretty-printed.
+    BEGIN { WIDECHAR = (length("é") == 1) }
+    { buf = (NR == 1 ? $0 : buf "\n" $0) }
+    END {
+      n = length(buf); depth = 0; i = 1
+      while (i <= n) {
+        c = substr(buf, i, 1)
+        if (c == "{") { depth++; type[depth] = "o"; key[depth] = ""; wantkey[depth] = 1; i++; continue }
+        if (c == "[") { depth++; type[depth] = "a"; key[depth] = ""; i++; continue }
+        if (c == "}" || c == "]") { if (depth > 0) depth--; i++; continue }
+        if (c == ",") { if (depth > 0 && type[depth] == "o") wantkey[depth] = 1; i++; continue }
+        if (c == "\"") {
+          if (depth > 0 && type[depth] == "o" && wantkey[depth]) {
+            if (!jstring(buf, i, 1)) exit 0
+            key[depth] = STRVAL; wantkey[depth] = 0
+          } else if (pathnow() == want) {
+            if (!jstring(buf, i, 1)) exit 0
+            print STRVAL
+            exit 0
+          } else {
+            if (!jstring(buf, i, 0)) exit 0
+          }
+          i = STRNEXT
+          continue
+        }
+        i++
+      }
+    }
+  ' 2>/dev/null
 }
 
 # Claim a one-time action for this project, atomically. mkdir is the POSIX
@@ -233,6 +348,180 @@ do_mode() {
 # segment, skip VAR=value prefixes and wrapper words (with their own flags),
 # then emit "<exe> <first non-flag argument>". Adapted from graphify's
 # _bash_invokes_search, which fixes the same class of false positive.
+# Project-relative paths a bash command reads, one per line.
+#
+# The ledger was blind to these: its PostToolUse matcher only covered the
+# file tools, so across 24 agents it recorded one read while the transcripts
+# showed hundreds. Agents read with cat, sed -n and grep far more often than
+# with the file tool.
+#
+# Gated on an allow-list of readers, per command segment, so `rm x.ts` is not
+# recorded as a read and `cd /repo && cat a.ts` still is. Tokenizing stays
+# deliberately crude - quotes are dropped and the text split on whitespace -
+# because the caller's [ -f ] test is the real filter: a fragment like "foo"
+# out of a quoted regex simply is not a file. Tokens holding a $ are skipped
+# rather than guessed at, which loses "$B/x.go" and is the right trade.
+# One path, normalized and made project-relative, or nothing if it lands
+# outside. Same rules as read_paths uses internally; both callers need them,
+# and a containment guard that exists in two versions is a guard that will
+# drift.
+rel_path() {
+  awk -v proj="$PROJ" -v p="$1" '
+    BEGIN {
+      if (p == "") exit
+      if (substr(p, 1, 1) != "/") p = proj "/" p
+      n = split(p, parts, "/")
+      k = 0
+      for (i = 1; i <= n; i++) {
+        if (parts[i] == "" || parts[i] == ".") continue
+        if (parts[i] == "..") { if (k > 0) k--; else exit; continue }
+        k++; out[k] = parts[i]
+      }
+      res = ""
+      for (i = 1; i <= k; i++) res = res "/" out[i]
+      if (index(res, proj "/") != 1) exit
+      print substr(res, length(proj) + 2)
+    }
+  ' 2>/dev/null
+}
+
+read_paths() {
+  awk -v proj="$PROJ" '
+    function is_reader(w) {
+      return (w=="cat"||w=="head"||w=="tail"||w=="less"||w=="more"||w=="sed"||
+              w=="awk"||w=="grep"||w=="egrep"||w=="fgrep"||w=="rg"||w=="ag"||
+              w=="wc"||w=="diff"||w=="cmp"||w=="od"||w=="xxd"||w=="jq"||
+              w=="yq"||w=="nl"||w=="strings"||w=="file"||w=="source"||w==".")
+    }
+    function is_wrapper(w) {
+      return (w=="sudo"||w=="doas"||w=="command"||w=="exec"||w=="nohup"||
+              w=="time"||w=="nice"||w=="ionice"||w=="env"||w=="xargs"||
+              w=="timeout"||w=="stdbuf")
+    }
+    function is_preamble(w) {
+      return (w=="cd"||w=="set"||w=="export"||w=="unset"||w=="pushd"||
+              w=="popd"||w=="shopt"||w=="umask"||w=="ulimit"||w=="alias"||
+              w=="for"||w=="while"||w=="until"||w=="if"||w=="then"||
+              w=="elif"||w=="else"||w=="fi"||w=="do"||w=="done"||w=="case"||
+              w=="esac"||w=="function"||w=="{"||w=="}"||w=="("||w==")")
+    }
+    # Lexical, not filesystem: resolve . and .. and require the result to sit
+    # inside the project. do_event relativizes only ABSOLUTE paths, so without
+    # this a relative ../../etc/passwd would reach the ledger verbatim and
+    # walk straight past the guard that rejects the absolute form.
+    function scriptfirst(w) {
+      return (w=="sed"||w=="awk"||w=="gawk"||w=="mawk"||w=="grep"||
+              w=="egrep"||w=="fgrep"||w=="rg"||w=="ag")
+    }
+    # Reject what read_paths can rule out on sight; [ -f ] does the rest.
+    function emit(tok,   r) {
+      if (tok ~ /^[A-Za-z_][A-Za-z0-9_]*=/) return
+      if (index(tok, "$") > 0) return
+      if (tok ~ /^[0-9]+$/) return
+      r = norm(tok)
+      if (r != "") print r
+    }
+    function norm_abs(p,   n, parts, out, i, k, res) {
+      n = split(p, parts, "/")
+      k = 0
+      for (i = 1; i <= n; i++) {
+        if (parts[i] == "" || parts[i] == ".") continue
+        if (parts[i] == "..") { if (k > 0) k--; else return ""; continue }
+        k++; out[k] = parts[i]
+      }
+      res = ""
+      for (i = 1; i <= k; i++) res = res "/" out[i]
+      return res
+    }
+    function norm(p,   n, parts, out, i, k, res) {
+      if (substr(p, 1, 1) != "/") p = base "/" p
+      n = split(p, parts, "/")
+      k = 0
+      for (i = 1; i <= n; i++) {
+        if (parts[i] == "" || parts[i] == ".") continue
+        if (parts[i] == "..") { if (k > 0) k--; else return ""; continue }
+        k++; out[k] = parts[i]
+      }
+      res = ""
+      for (i = 1; i <= k; i++) res = res "/" out[i]
+      if (index(res, proj "/") != 1) return ""
+      return substr(res, length(proj) + 2)
+    }
+    { buf = (NR == 1 ? $0 : buf "\n" $0) }
+    END {
+      gsub(/["'"'"']/, " ", buf)
+      for (r = 0; r < 8; r++) { if (!gsub(/\$\([^()]*\)/, " ", buf)) break }
+      gsub(/`[^`]*`/, " ", buf)
+      # Give redirect operators their own token so `cat a>b` parses like
+      # `cat a > b`.
+      gsub(/[0-9]*>>?|</, " & ", buf)
+      base = proj
+      ns = split(buf, seg, /[|;&\n]+/)
+      for (s = 1; s <= ns && !stop; s++) {
+        n = split(seg[s], t, /[ \t]+/)
+        i = 1
+        while (i <= n) {
+          tok = t[i]
+          if (tok == "") { i++; continue }
+          if (tok ~ /^[A-Za-z_][A-Za-z0-9_]*=/) { i++; continue }
+          sub(/.*\//, "", tok); sub(/\.exe$/, "", tok)
+          if (is_wrapper(tolower(tok))) {
+            i++
+            while (i <= n && t[i] ~ /^-/) i++
+            continue
+          }
+          break
+        }
+        if (i > n) continue
+        exe = tolower(t[i]); sub(/.*\//, "", exe); sub(/\.exe$/, "", exe)
+
+        # A cd moves the base for everything after it. One we cannot resolve
+        # ends the walk: every later relative path would be measured from
+        # the wrong root, and a wrong path is worse than a missing one.
+        if (exe == "cd") {
+          arg = ""
+          for (j = i + 1; j <= n; j++) if (t[j] != "") { arg = t[j]; break }
+          if (arg == "" || index(arg, "$") > 0) { stop = 1; break }
+          base = norm_abs(substr(arg, 1, 1) == "/" ? arg : base "/" arg)
+          if (base == "") { stop = 1; break }
+          continue
+        }
+        if (is_preamble(exe) || !is_reader(exe)) continue
+
+        pend = ""; skipnext = 0; nop = 0; sawpat = 0; noread = 0
+        for (j = i + 1; j <= n; j++) {
+          tok = t[j]
+          if (tok == "") continue
+          # Redirects were pre-spaced into tokens of their own above.
+          if (tok ~ /^[0-9]*>>?$/) { pend = "w"; continue }
+          if (tok == "<") { pend = "r"; continue }
+          if (pend == "w") { pend = ""; continue }   # a > target is written
+          if (pend == "r") { pend = ""; emit(tok); continue }
+          if (substr(tok, 1, 1) == "-") {
+            # -e supplies the pattern, so the first operand stops being one.
+            if (tok == "-e" || tok == "--regexp") { sawpat = 1; skipnext = 1 }
+            # -f supplies it from a file, and that file really is read.
+            else if (tok == "-f" || tok == "--file") { sawpat = 1; pend = "r" }
+            else if (tok ~ /^--(regexp|file)=/) sawpat = 1
+            # sed -i rewrites in place. That is a write, and the ledger
+            # already has a kind for writes.
+            else if (exe == "sed" && tok ~ /^-[A-Za-z]*i/) noread = 1
+            continue
+          }
+          if (skipnext) { skipnext = 0; continue }
+          nop++
+          if (noread) continue
+          # For these the first bare operand is a regex or a program, not a
+          # file - and `grep -n README.md check.sh` would otherwise record
+          # the pattern purely because a file of that name happens to exist.
+          if (scriptfirst(exe) && !sawpat && nop == 1) continue
+          emit(tok)
+        }
+      }
+    }
+  '
+}
+
 signature() {
   awk '
     function is_wrapper(w) {
@@ -240,23 +529,31 @@ signature() {
               w=="time"||w=="nice"||w=="ionice"||w=="env"||w=="xargs"||
               w=="timeout"||w=="stdbuf")
     }
-    {
-      # Join the whole command; heredoc bodies were already stripped upstream.
-      buf = (NR==1 ? $0 : buf " " $0)
+    # Navigation and environment setup are how a command STARTS, not what it
+    # does. Keying on the first segment made `cd /repo && npm run build` sign
+    # as "cd" and `set -e; pytest` sign as "set": across 1,050 real commands
+    # that collapsed 645 distinct ones onto "cd" and 53 onto "set", and "set"
+    # cleared the repeat threshold and produced a skill suggestion for a
+    # shell builtin.
+    # Shell control words belong here too: `for f in ...; do npm run build;
+    # done` is an npm procedure, not a "for" procedure.
+    function is_preamble(w) {
+      return (w=="cd"||w=="set"||w=="export"||w=="unset"||w=="pushd"||
+              w=="popd"||w=="source"||w=="."||w=="shopt"||w=="umask"||
+              w=="ulimit"||w=="alias"||w=="for"||w=="while"||w=="until"||
+              w=="if"||w=="then"||w=="elif"||w=="else"||w=="fi"||w=="do"||
+              w=="done"||w=="case"||w=="esac"||w=="function"||w=="{"||
+              w=="}"||w=="("||w==")")
     }
-    END {
-      # Drop quoted spans - anything quoted is an argument, never the exe.
-      gsub(/'"'"'[^'"'"']*'"'"'/, " ", buf)
-      gsub(/"[^"]*"/, " ", buf)
-      # First command segment only.
-      sub(/[|;&].*/, "", buf)
-      sub(/^[ \t]+/, "", buf)
-      n = split(buf, t, /[ \t]+/)
+    # "<exe> <subcommand>" for one command segment, or "" if it holds none.
+    function seg_sig(seg,   n, t, i, tok, exe, arg, nxt) {
+      sub(/^[ \t]+/, "", seg)
+      n = split(seg, t, /[ \t]+/)
       i = 1
       while (i <= n) {
         tok = t[i]
         if (tok == "") { i++; continue }
-        # VAR=value prefix (an "=" before any slash-free trailing segment).
+        # VAR=value prefix.
         if (tok ~ /^[A-Za-z_][A-Za-z0-9_]*=/) { i++; continue }
         # Strip any directory part and a .exe suffix.
         sub(/.*\//, "", tok)
@@ -268,7 +565,7 @@ signature() {
         }
         break
       }
-      if (i > n) exit
+      if (i > n) return ""
       exe = tolower(t[i]); sub(/.*\//, "", exe); sub(/\.exe$/, "", exe)
       # A subcommand, and only a subcommand: the token immediately after the
       # exe, and only when it is a bare word. `npm run`, `git commit` and
@@ -276,12 +573,42 @@ signature() {
       # collapse; `-k auth` is a flag value and `tests/unit` is a path, and
       # keying on either would give every invocation its own signature so the
       # repeat threshold is never reached.
+      # Must be a bare word. A redirect is not a subcommand: without this,
+      # `cat > out.txt` and `cat <<EOF` signed as "cat >" and "cat <<".
       arg = ""
       if (i + 1 <= n) {
         nxt = t[i + 1]
-        if (nxt != "" && nxt !~ /^-/ && nxt !~ /[\/=]/) arg = tolower(nxt)
+        if (nxt ~ /^[A-Za-z][A-Za-z0-9_.-]*$/) arg = tolower(nxt)
       }
-      print exe (arg == "" ? "" : " " arg)
+      return exe (arg == "" ? "" : " " arg)
+    }
+    {
+      # Keep the newlines: a pasted script is many commands, and joining them
+      # with a space made the whole thing one segment, so the signature came
+      # from whatever token happened to follow a pipe deep inside it - real
+      # scripts signed as "sort" and "1".
+      buf = (NR==1 ? $0 : buf "\n" $0)
+    }
+    END {
+      # Drop quoted spans - anything quoted is an argument, never the exe.
+      gsub(/'"'"'[^'"'"']*'"'"'/, " ", buf)
+      gsub(/"[^"]*"/, " ", buf)
+      # Command substitutions are arguments too. Innermost-first so nesting
+      # unwinds; the guard stops a pathological input from spinning.
+      for (r = 0; r < 8; r++) {
+        if (!gsub(/\$\([^()]*\)/, " ", buf)) break
+      }
+      gsub(/`[^`]*`/, " ", buf)
+      ns = split(buf, seg, /[|;&\n]+/)
+      for (s = 1; s <= ns; s++) {
+        sig = seg_sig(seg[s])
+        if (sig == "") continue
+        split(sig, w, " ")
+        if (!is_preamble(w[1])) { print sig; exit }
+      }
+      # Every segment was navigation, setup or a control word. There is no
+      # procedure here to key on, so emit nothing rather than key on the
+      # scaffolding - do_signal treats empty as "skip".
     }
   '
 }
@@ -308,12 +635,18 @@ strip_heredocs() {
 # Silent and append-only. Never writes to stdout: this runs on every Bash call.
 do_signal() {
   [ "${CONTEXT_KIT_NO_SIGNALS:-}" = "1" ] && exit 0
-  CMD="$(json_field command)"
+  CMD="$(json_field tool_input.command)"
   [ -n "$CMD" ] || exit 0
   SIG="$(printf '%s\n' "$CMD" | strip_heredocs | signature | tr -cs 'a-z0-9' '-' | sed 's/^-*//;s/-*$//')"
   [ -n "$SIG" ] || exit 0
+  # Bare interpreters are denied without a -* form on purpose: `python3`
+  # alone is someone running a throwaway script, but `python3 manage.py` is a
+  # procedure and must still reach the threshold.
   case "$SIG" in
-    ls|ls-*|cd|cd-*|cat|cat-*|echo|echo-*|pwd|which|which-*|head|head-*|tail|tail-*|git-status|git-diff|git-log|grep|grep-*|find|find-*|mkdir|mkdir-*|rm|rm-*|cp|cp-*|mv|mv-*|sed|sed-*|awk|awk-*|wc|wc-*|true|exit)
+    ls|ls-*|cd|cd-*|cat|cat-*|echo|echo-*|pwd|which|which-*|head|head-*|tail|tail-*|git-status|git-diff|git-log|grep|grep-*|find|find-*|mkdir|mkdir-*|rm|rm-*|cp|cp-*|mv|mv-*|sed|sed-*|awk|awk-*|wc|wc-*|true|exit|\
+    diff|diff-*|sort|sort-*|uniq|uniq-*|cut|cut-*|tr|tr-*|touch|touch-*|chmod|chmod-*|\
+    set|export|unset|printf|test|basename|dirname|date|od|xxd|\
+    sh|bash|zsh|node|python|python3|perl|ruby)
       exit 0 ;;
   esac
   SIGDIR="$DATA/signals"
@@ -337,6 +670,42 @@ do_signal() {
 #
 # Records identifiers only - a tool name, a file path, a skill name, a
 # subagent type. Never arguments, never file contents, never prompt text.
+open_ledger() {
+  EVDIR="$DATA/events"
+  mkdir -p "$EVDIR" 2>/dev/null || return 1
+  EVFILE="$EVDIR/$HASH.tsv"
+  return 0
+}
+
+append_event() {
+  # A tab or newline in a value would desynchronize every later column.
+  _T="$(printf '%s' "$2" | tr '\t\n\r' '   ' | cut -c1-200)"
+  case "$_T" in ""|" "*) return 0 ;; esac
+  printf '%s\t%s\t%s\t%s\n' "$(date +%s 2>/dev/null)" "$1" "$ACTOR" "$_T" \
+    >> "$EVFILE" 2>/dev/null
+}
+
+# Trim reads first and keep agent and skill events.
+#
+# The old rotation kept the last 2000 lines of anything. Once bash reads are
+# recorded that is mostly reads, and context-graph.awk decides a skill was
+# "never invoked in the recorded activity" from whatever survived - so
+# rotation could manufacture that finding. Reads are both the bulk and the
+# most disposable, so they are what gets dropped.
+rotate_events() {
+  # The redirect below fails in the shell, not in wc, so 2>/dev/null on wc
+  # would not silence it - and a hook that writes to stderr taints every
+  # tool call it runs on.
+  [ -f "$EVFILE" ] || return 0
+  LINES="$(wc -l < "$EVFILE" 2>/dev/null | tr -d ' ')"
+  [ -n "$LINES" ] || return 0
+  [ "$LINES" -gt 4000 ] 2>/dev/null || return 0
+  { awk -F'\t' '$2=="agent"||$2=="skill"' "$EVFILE" 2>/dev/null | tail -n 1000
+    awk -F'\t' '$2!="agent"&&$2!="skill"' "$EVFILE" 2>/dev/null | tail -n 2000
+  } | sort -n -k1,1 > "$EVFILE.tmp" 2>/dev/null &&
+    mv "$EVFILE.tmp" "$EVFILE" 2>/dev/null
+}
+
 do_event() {
   [ "${CONTEXT_KIT_NO_SIGNALS:-}" = "1" ] && exit 0
   [ "${CONTEXT_KIT_NO_ACTIVITY:-}" = "1" ] && exit 0
@@ -365,16 +734,35 @@ do_event() {
   if [ -z "$KIND" ]; then
     case "$TOOL" in
       Read|NotebookRead)
-        KIND="read";  TARGET="$(printf '%s' "$IN" | json_field file_path)" ;;
+        KIND="read";  TARGET="$(printf '%s' "$IN" | json_field tool_input.file_path)" ;;
       Edit|Write|NotebookEdit)
-        KIND="write"; TARGET="$(printf '%s' "$IN" | json_field file_path)" ;;
+        KIND="write"; TARGET="$(printf '%s' "$IN" | json_field tool_input.file_path)" ;;
       Task)
         KIND="agent"
-        TARGET="$(printf '%s' "$IN" | json_field subagent_type)"
+        TARGET="$(printf '%s' "$IN" | json_field tool_input.subagent_type)"
+        [ -n "$TARGET" ] || TARGET="$(printf '%s' "$IN" | json_field subagent_type)"
         [ -n "$TARGET" ] || TARGET="subagent"
         ;;
       Skill)
-        KIND="skill"; TARGET="$(printf '%s' "$IN" | json_field skill)" ;;
+        KIND="skill"; TARGET="$(printf '%s' "$IN" | json_field tool_input.skill)"
+                      [ -n "$TARGET" ] || TARGET="$(printf '%s' "$IN" | json_field skill)" ;;
+      Bash)
+        # One command can read several files, so this case records its own
+        # events and returns rather than falling through to the single-target
+        # path below. sort -u collapses a file read twice in one command;
+        # [ -f ] is what rejects the tokens read_paths could not rule out,
+        # like a sed script or a quoted regex fragment.
+        CMD="$(printf '%s' "$IN" | json_field tool_input.command)"
+        [ -n "$CMD" ] || exit 0
+        open_ledger || exit 0
+        printf '%s\n' "$CMD" | strip_heredocs | read_paths | sort -u | head -n 40 |
+          while IFS= read -r P; do
+            [ -f "$PROJ/$P" ] || continue
+            append_event read "$P"
+          done
+        rotate_events
+        exit 0
+        ;;
       *) exit 0 ;;
     esac
   fi
@@ -385,25 +773,17 @@ do_event() {
   # machine-specific prefix reaches the graph or the vault.
   case "$KIND" in
     read|write)
-      case "$TARGET" in
-        "$PROJ"/*) TARGET="${TARGET#"$PROJ"/}" ;;
-        /*) exit 0 ;;  # outside the project: not ours to record
-      esac
+      # A relative path used to fall through both arms of the old case and
+      # reach the ledger verbatim, so ../../etc/passwd walked straight past
+      # the guard that rejects the absolute form.
+      TARGET="$(rel_path "$TARGET")"
+      [ -n "$TARGET" ] || exit 0
       ;;
   esac
 
-  # A tab or newline in a value would desynchronize every later column.
-  TARGET="$(printf '%s' "$TARGET" | tr '\t\n\r' '   ' | cut -c1-200)"
-  case "$TARGET" in ""|" "*) exit 0 ;; esac
-
-  EVDIR="$DATA/events"
-  mkdir -p "$EVDIR" 2>/dev/null || exit 0
-  EVFILE="$EVDIR/$HASH.tsv"
-  printf '%s\t%s\t%s\t%s\n' "$(date +%s 2>/dev/null)" "$KIND" "$ACTOR" "$TARGET" >> "$EVFILE" 2>/dev/null
-  LINES="$(wc -l < "$EVFILE" 2>/dev/null | tr -d ' ')"
-  if [ -n "$LINES" ] && [ "$LINES" -gt 4000 ] 2>/dev/null; then
-    tail -n 2000 "$EVFILE" > "$EVFILE.tmp" 2>/dev/null && mv "$EVFILE.tmp" "$EVFILE" 2>/dev/null
-  fi
+  open_ledger || exit 0
+  append_event "$KIND" "$TARGET"
+  rotate_events
   exit 0
 }
 

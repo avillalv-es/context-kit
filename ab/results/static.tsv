@@ -1,0 +1,25 @@
+size	task	arm	bytes	est_tokens	files	detail
+1	t1-api-field	a	2616	654	2	CLAUDE.md:1404 10-api.md:1212
+1	t1-api-field	b	4279	1069	1	CLAUDE.md:4279
+1	t2-billing-fix	a	2123	530	2	CLAUDE.md:1404 40-billing.md:719
+1	t2-billing-fix	b	4279	1069	1	CLAUDE.md:4279
+1	t3-db-index	a	2372	593	2	CLAUDE.md:1404 50-db.md:968
+1	t3-db-index	b	4279	1069	1	CLAUDE.md:4279
+1	t4-worker-guard	a	1404	351	1	CLAUDE.md:1404
+1	t4-worker-guard	b	4279	1069	1	CLAUDE.md:4279
+2	t1-api-field	a	9444	2361	4	CLAUDE.md:1839 10-api.md:1212 11-api-depth.md:5768 60-domain.md:625
+2	t1-api-field	b	23412	5853	1	CLAUDE.md:23412
+2	t2-billing-fix	a	8346	2086	4	CLAUDE.md:1839 40-billing.md:719 41-billing-depth.md:5163 60-domain.md:625
+2	t2-billing-fix	b	23412	5853	1	CLAUDE.md:23412
+2	t3-db-index	a	9143	2285	3	CLAUDE.md:1839 50-db.md:968 51-db-depth.md:6336
+2	t3-db-index	b	23412	5853	1	CLAUDE.md:23412
+2	t4-worker-guard	a	1839	459	1	CLAUDE.md:1839
+2	t4-worker-guard	b	23412	5853	1	CLAUDE.md:23412
+3	t1-api-field	a	10098	2524	4	CLAUDE.md:2493 10-api.md:1212 11-api-depth.md:5768 60-domain.md:625
+3	t1-api-field	b	50328	12582	1	CLAUDE.md:50328
+3	t2-billing-fix	a	9000	2250	4	CLAUDE.md:2493 40-billing.md:719 41-billing-depth.md:5163 60-domain.md:625
+3	t2-billing-fix	b	50328	12582	1	CLAUDE.md:50328
+3	t3-db-index	a	9797	2449	3	CLAUDE.md:2493 50-db.md:968 51-db-depth.md:6336
+3	t3-db-index	b	50328	12582	1	CLAUDE.md:50328
+3	t4-worker-guard	a	3591	897	3	CLAUDE.md:2493 90-workers.md:541 91-config.md:557
+3	t4-worker-guard	b	50328	12582	1	CLAUDE.md:50328

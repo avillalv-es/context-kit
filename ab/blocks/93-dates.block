@@ -1,0 +1,5 @@
+src/lib/dates.ts|3
+# Dates
+- `halfHourBucket` floors to :00 or :30 and returns an ISO string in UTC.
+- `daysBetween` rounds, because DST transitions make the raw division non-integral even in UTC-stored data.
+- Never construct a `Date` from a non-ISO string. Parsing is implementation-defined and differs between runtimes.

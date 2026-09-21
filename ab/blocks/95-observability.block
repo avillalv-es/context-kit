@@ -1,0 +1,95 @@
+*|3
+# Observability and alerting
+
+## Log events
+
+`log()` writes one JSON line to stdout: no metrics client, no tracer, and
+package.json has no runtime dependencies on purpose. **Every metric here is
+derived from those lines** — a new metric is a field on an existing event.
+
+| event | level | emitted by | read by |
+|---|---|---|---|
+| `boot` | info | `src/index.ts` | deploy marker on every dashboard |
+| `ingest.batch` | info | `workers/ingest.ts` | freshness + volume |
+| `rollup.done` | info | `workers/rollup.ts` | rollup lateness |
+| `unhandled` | error | `problem()` in `api/middleware.ts` | the only paging error signal |
+
+- Names are `noun.verb` and **never parameterised** — `ingest.batch`, not
+  `ingest.batch.site-123`; the collector indexes on `event` and bills
+  cardinality. `boot` predates the rule; add no second exception. No `ts`
+  field either: arrival is stamped upstream — never order two events from a tick.
+- `warn` and `debug` are in the `Level` union and unused deliberately. Reaching
+  for `warn` almost always means you want a field on an existing `info` event.
+- Errors are half-blind. `problem()` logs nothing for a `DomainError`, so a
+  provider posting garbage looks exactly like one posting nothing — alert on
+  `count`. And `unhandled` carries only `message`, because `problem(e)` never
+  receives the `Req`: the one event that pages names no route and no `siteId`.
+- `rollup.done` logs raw `wh`. Logs are not a presentation boundary, so ADR 001
+  does not apply; dashboards divide by 1000 at render time.
+
+## Redaction, and what still leaks
+
+`REDACT` in `lib/logger.ts` matches top-level keys by exact name. Three holes:
+
+- It is shallow. `log("info", "x", { raw: { mpan } })` publishes the MPAN. Never
+  log a whole request body or `RawReading`; name the fields you want.
+- `siteId` *is* an MPAN (`validateSiteId` enforces 13 digits) and is not in the
+  list. Treat it as personal data: it earns its place in `rollup.done` because
+  ops cannot triage without it. A new event carrying it needs a privacy sign-off.
+- Keys are filtered, values never are, and `unhandled` ships a whole stringified
+  error as `message`. `NotFound` already builds `site ${siteId} not found`; the
+  day such a string escapes as a non-`DomainError`, the MPAN is published.
+
+## Metrics, all log-derived
+
+| metric | derivation | note |
+|---|---|---|
+| `ingest_readings_total` | sum of `ingest.batch.count` | **attempted, not persisted** |
+| `ingest_last_seen` | age of newest `ingest.batch` | the freshness SLI |
+| `rollup_lateness` | now − newest `rollup.done` | per `siteId`, p99 |
+| `unhandled_total` | count of `unhandled` | paging |
+
+`count` is `insertReadings`' `rows.length` — rows handed to the DB, not a write
+confirmation, and its statement holds three placeholders against `rows.flatMap`
+params (3 × N), so a multi-row batch cannot land as written. Reconcile nightly.
+
+Two blind spots share the ingest path. `ingestBatch` validates inside a `.map()`
+with no try/catch, so one bad row throws before `insertReadings` and **no
+`ingest.batch` line is written at all** — a poison reading reads as a stall, not
+a volume drop. `POST /v1/readings` inserts directly and logs nothing: unmetered.
+
+## SLOs
+
+- Ingest freshness: a batch lands within **15 min**, 99.5% of half-hours.
+- Rollup lateness: p99 under **3 × `ROLLUP_INTERVAL_MS`** (5 min by default, so
+  15 min). Three intervals deliberately — one skipped tick is normal.
+- No scheduler lives here: `ingestBatch` and `rollupSite` are exported uncalled
+  and `rollupIntervalMs` is parsed with no reader; both ticks are the caller's.
+- Billing API 99.9% monthly, measured at the edge: `unhandled` misses hard crashes.
+
+## Alerts
+
+| alert | condition | pages? |
+|---|---|---|
+| `ingest-stalled` | no `ingest.batch` for 30 min | yes, 24/7 |
+| `ingest-volume-drop` | count < 40% of same half-hour last week | yes, business hours |
+| `unhandled-spike` | > 5 in 5 min | yes |
+| `rollup-late` | lateness > 30 min | no, ticket |
+| `rollup-span-wide` | `rollup.done.days` > 40 | no, ticket |
+
+The billing path has no `log` call of its own: a `no_tariff` 422 or a wrong
+`pence` is silent, and only an unexpected throw surfaces, as `unhandled`.
+
+## Incidents worth remembering
+
+- **Kingfisher** (Nov 2024). A provider raised payload size to ~2,000 readings;
+  `raw.slice(0, cfg.ingestBatchSize)` dropped the rest while `ingest.batch` still
+  reported `count: 500`. Eleven days lost. **Never alert on a capped number.**
+- **Redact-5** (Feb 2025). MPANs reached the log store for fourteen months as
+  `rollup.done.siteId` while `mpan` sat in `REDACT`; retention there is now 30
+  days. Name-keyed redaction loses to a rename.
+- **Quiet Quarter** (Jun 2025). Tariff precedence (ADR 002) was applied wrongly
+  and a cohort was undercharged for a quarter; a customer found it, not us.
+  Lesson: **a branch choosing between candidates must log which one it chose.**
+  Still open: `chargeFor` takes `active[0]`, the case ADR 002 calls wrong, and
+  logs nothing — the same quarter is reproducible today.

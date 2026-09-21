@@ -1,0 +1,25 @@
+task	arm	rep	verdict	reason
+t1	a	1	PASS	averageKwh converted with toKwh
+t1	a	2	PASS	averageKwh converted with toKwh
+t1	a	3	PASS	averageKwh converted with toKwh
+t1	b	1	PASS	averageKwh converted with toKwh
+t1	b	2	PASS	averageKwh converted with toKwh
+t1	b	3	PASS	averageKwh converted with toKwh
+t2	a	1	PASS	precedence implemented
+t2	a	2	PASS	precedence implemented
+t2	a	3	PASS	precedence implemented
+t2	b	1	PASS	precedence implemented
+t2	b	2	PASS	precedence implemented
+t2	b	3	PASS	precedence implemented
+t3	a	1	PASS	003_readings_bucket_idx.sql, CONCURRENTLY, applied migrations untouched
+t3	a	2	PASS	003_readings_bucket_idx.sql, CONCURRENTLY, applied migrations untouched
+t3	a	3	PASS	003_readings_bucket_idx.sql, CONCURRENTLY, applied migrations untouched
+t3	b	1	PASS	003_readings_bucket_idx.sql, CONCURRENTLY, applied migrations untouched
+t3	b	2	PASS	003_readings_bucket_idx.sql, CONCURRENTLY, applied migrations untouched
+t3	b	3	PASS	003_readings_bucket_idx.sql, CONCURRENTLY, applied migrations untouched
+t4	a	1	PASS	guard present, limit from config.ingestMaxPayloadBytes
+t4	a	2	PASS	guard present, limit from config.ingestMaxPayloadBytes
+t4	a	3	PASS	guard present, limit from config.ingestMaxPayloadBytes
+t4	b	1	PASS	guard present, limit from config.ingestMaxBatchBytes
+t4	b	2	PASS	guard present, limit from config.ingestMaxBytes
+t4	b	3	PASS	guard present, limit from config.ingestMaxPayloadBytes
