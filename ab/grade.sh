@@ -10,18 +10,24 @@ mkdir -p "$AB/results"
 printf 'task\tarm\trep\tverdict\treason\n' > "$OUT"
 
 grade_t1() { # averageKwh must be kWh via toKwh, not raw Wh
+  # The check must bind to the NEW FIELD, not to the file: readings.ts already
+  # calls toKwh for totalKwh, so "toKwh appears somewhere" passes a solution
+  # that returns the new field in raw Wh. That false PASS is the exact bug
+  # this task exists to detect.
   D="$1"; F="$D/src/api/readings.ts"
   grep -q 'averageKwh' "$F" 2>/dev/null || { echo "FAIL|field not added"; return; }
-  if grep -q 'averageKwh' "$F" && grep -q 'toKwh' "$F"; then
-    # crude but decisive: the field must not be assigned a bare Wh expression
-    if grep -E 'averageKwh:[^,}]*toKwh|const[[:space:]]+averageKwh[^;]*toKwh' "$F" >/dev/null 2>&1; then
-      echo "PASS|averageKwh converted with toKwh"
-    else
-      echo "PASS|averageKwh present, toKwh used in file"
-    fi
-  else
-    echo "FAIL|averageKwh not converted to kWh"
-  fi
+  EXPR="$(grep -hoE '(const[[:space:]]+averageKwh[^;]*|averageKwh:[^,}]*)' "$F" 2>/dev/null | tr '\n' ' ')"
+  case "$EXPR" in
+    *toKwh*) echo "PASS|averageKwh converted with toKwh" ;;
+    *)
+      # allow the indirection `const x = toKwh(...); ... averageKwh: x`
+      VAR="$(printf '%s' "$EXPR" | sed -n 's/.*averageKwh:[[:space:]]*\([A-Za-z_][A-Za-z0-9_]*\).*/\1/p' | head -1)"
+      if [ -n "$VAR" ] && grep -qE "(const|let)[[:space:]]+$VAR[^;]*toKwh" "$F" 2>/dev/null; then
+        echo "PASS|averageKwh converted with toKwh via $VAR"
+      else
+        echo "FAIL|averageKwh returns raw Wh"
+      fi ;;
+  esac
 }
 
 grade_t2() { # tariff precedence capacity > timeOfUse > fixed
@@ -58,21 +64,23 @@ grade_t3() { # new numbered migration, CONCURRENTLY, existing migrations untouch
 grade_t4() { # guard exists AND the limit is config-driven, not a literal
   D="$1"; F="$D/src/workers/ingest.ts"
   grep -qiE 'byte|size|2_?000_?000|2 ?\* ?1024|maxBatch' "$F" 2>/dev/null || { echo "FAIL|no size guard"; return; }
-  if grep -qE '2_?000_?000|2 ?\* ?1024 ?\* ?1024|2097152' "$F" 2>/dev/null &&
-     ! grep -q 'cfg\.' "$F" 2>/dev/null; then
-    echo "FAIL|limit hard-coded, convention says config"
-  elif grep -qE 'maxBatchBytes|MaxBytes|maxBytes|batchBytes' "$D/src/lib/config.ts" 2>/dev/null; then
+  # A byte literal anywhere in the worker fails outright. ingest.ts already
+  # reads cfg.ingestBatchSize for a different purpose, so "the file mentions
+  # cfg." is not evidence that THIS limit came from config.
+  if grep -qE '2_?000_?000|2 ?\* ?1024 ?\* ?1024|2097152' "$F" 2>/dev/null; then
+    echo "FAIL|byte limit hard-coded, convention says config"
+  elif grep -qE 'maxBatchBytes|MaxBytes|maxBytes|batchBytes|BATCH_BYTES' "$D/src/lib/config.ts" 2>/dev/null; then
     echo "PASS|guard present and config-driven"
-  elif grep -q 'cfg\.' "$F" 2>/dev/null; then
-    echo "PASS|guard present, reads from config"
   else
-    echo "FAIL|limit hard-coded, convention says config"
+    echo "FAIL|no byte limit in config"
   fi
 }
 
+ARMS="${ARMS:-a b}"
+REPS="${REPS:-1 2 3}"
 for T in t1 t2 t3 t4; do
-  for A in a b; do
-    for R in 1 2 3; do
+  for A in $ARMS; do
+    for R in $REPS; do
       D="$AB/runs/$T-$A-r$R"
       [ -d "$D" ] || continue
       case "$T" in

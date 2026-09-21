@@ -24,7 +24,7 @@ ARM_LABEL = {"a": "context-kit layout", "b": "one CLAUDE.md"}
 TASK_LABEL = {
     "t1": "API field", "t2": "Billing fix", "t3": "DB index", "t4": "Worker guard",
     "t1-api-field": "API field", "t2-billing-fix": "Billing fix",
-    "t3-db-index": "DB index", "t4-impact": "Worker guard",
+    "t3-db-index": "DB index", "t4-worker-guard": "Worker guard",
     "T1-api": "API field", "T2-billing": "Billing fix",
     "T3-db": "DB index", "T4-worker": "Worker guard",
 }
@@ -176,55 +176,127 @@ def chart_factgap(gap):
 
 # ---------------------------------------------------------------- chart 4
 def chart_grades(grades):
+    """A pass/fail cell per run. Arms stacked, tasks down, repetitions across."""
     if not grades:
         return ""
-    W, H = 760, 300
+    tasks = [t for t in ("t1", "t2", "t3", "t4")
+             if any(g["task"] == t for g in grades)]
+    reps = sorted({g["rep"] for g in grades})
+    if not tasks or not reps:
+        return ""
+
+    cw, ch, gap, row = 34, 22, 6, 28
+    gutter = 150
+    block = row * len(tasks) + 22          # heading + its rows
+    W = 760
+    top = 78
+    H = top + block * 2 + 34
+
     s = [svg_open(W, H, "Correctness of every run")]
-    s.append(f'<text x="32" y="26" font-size="15" font-weight="600" fill="{INK}">Correctness, every run</text>')
-    s.append(f'<text x="32" y="44" font-size="12" fill="{INK2}">Graded against the load-bearing convention for each task, not just &#8220;does it run&#8221;.</text>')
-    tasks = ["t1", "t2", "t3", "t4"]
-    x0, y0, cell, gap = 190, 74, 30, 6
+    s.append(f'<text x="32" y="26" font-size="15" font-weight="600" fill="{INK}">'
+             f'Correctness, every run</text>')
+    s.append(f'<text x="32" y="46" font-size="12" fill="{INK2}">Graded against the '
+             f'load-bearing convention for each task, not just &#8220;does it run&#8221;.</text>')
+
     for ai, arm in enumerate(("b", "a")):
-        ry = y0 + ai * (cell * 4 + 34)
-        s.append(f'<text x="{x0-14}" y="{ry+14}" text-anchor="end" font-size="12.5" font-weight="600" fill="{INK2}">{esc(ARM_LABEL[arm])}</text>')
+        by = top + ai * block
+        s.append(f'<text x="32" y="{by}" font-size="12.5" font-weight="600" fill="{INK2}">'
+                 f'{esc(ARM_LABEL[arm])}</text>')
         for ti, t in enumerate(tasks):
-            cy = ry + ti * (cell - 8)
-            s.append(f'<text x="{x0-14}" y="{cy+cell/2+4}" text-anchor="end" font-size="11" fill="{INK3}">{esc(TASK_LABEL[t])}</text>')
-            for ri, rep in enumerate(("1", "2", "3")):
-                row = next((g for g in grades if g["task"] == t and g["arm"] == arm and g["rep"] == rep), None)
-                cx = x0 + ri * (cell + gap)
-                col = GRID if not row else (GOOD_L if row["verdict"] == "PASS" else BAD_L)
-                s.append(f'<rect x="{cx}" y="{cy}" width="{cell}" height="{cell-10}" rx="4" fill="{col}"/>')
-                if row:
-                    mark = "&#10003;" if row["verdict"] == "PASS" else "&#10007;"
-                    s.append(f'<text x="{cx+cell/2}" y="{cy+cell/2+1}" text-anchor="middle" font-size="12" font-weight="700" fill="#ffffff">{mark}</text>')
-    s.append(f'<text x="{x0}" y="{H-24}" font-size="11.5" fill="{INK3}">three repetitions per task &#183; green = followed the convention, red = did not</text>')
+            cy = by + 12 + ti * row
+            s.append(f'<text x="{gutter-12}" y="{cy+ch-6}" text-anchor="end" font-size="11.5" '
+                     f'fill="{INK3}">{esc(TASK_LABEL.get(t, t))}</text>')
+            for ri, rep in enumerate(reps):
+                g = next((x for x in grades
+                          if x["task"] == t and x["arm"] == arm and x["rep"] == rep), None)
+                cx = gutter + ri * (cw + gap)
+                col = GRID if not g else (GOOD_L if g["verdict"] == "PASS" else BAD_L)
+                s.append(f'<rect x="{cx}" y="{cy}" width="{cw}" height="{ch}" rx="4" fill="{col}"/>')
+                if g:
+                    mark = "&#10003;" if g["verdict"] == "PASS" else "&#10007;"
+                    s.append(f'<text x="{cx+cw/2}" y="{cy+ch/2+4.5}" text-anchor="middle" '
+                             f'font-size="12" font-weight="700" fill="#ffffff">{mark}</text>')
+            passed = sum(1 for x in grades
+                         if x["task"] == t and x["arm"] == arm and x["verdict"] == "PASS")
+            total = sum(1 for x in grades if x["task"] == t and x["arm"] == arm)
+            tx = gutter + len(reps) * (cw + gap) + 8
+            s.append(f'<text x="{tx}" y="{cy+ch-6}" font-size="11.5" fill="{INK3}">'
+                     f'{passed}/{total}</text>')
+
+    s.append(f'<text x="32" y="{H-12}" font-size="11.5" fill="{INK3}">'
+             f'{len(reps)} repetitions per task &#183; green = followed the convention, '
+             f'red = did not</text>')
     s.append("</svg>")
     return "".join(s)
 
 
 # ---------------------------------------------------------------- chart 5
 def chart_empirical(emp, runs):
+    """Every run, not a mean. Peak context = the largest the model's window got.
+
+    Both arms pay an identical fixed floor (system prompt + harness + tool
+    schemas) before any project file is read. The floor is drawn so the reader
+    can see how much of each bar the layout could possibly have influenced.
+    """
     if not emp:
         return ""
-    W, H = 760, 340
-    x0, y0, w, h = 110, 62, 560, 190
-    vals = {r["arm"]: float(r["tokens_total"]) for r in emp}
-    ymax = max(vals.values()) * 1.2
+    rows = [r for r in emp if r.get("peak_ctx")]
+    if not rows:
+        return ""
+    W, H = 760, 424
+    x0, y0, w, h = 96, 96, 580, 210
+    peaks = [float(r["peak_ctx"]) for r in rows]
+    ymax = max(peaks) * 1.15
+    floor = min(peaks)
     g, ys = axis(x0, y0, w, h, ymax)
-    s = [svg_open(W, H, "Tokens actually spent")]
-    s.append(f'<text x="{x0-78}" y="26" font-size="15" font-weight="600" fill="{INK}">Tokens actually spent, 12 runs per arm</text>')
-    s.append(f'<text x="{x0-78}" y="44" font-size="12" fill="{INK2}">Whole-workflow totals. N is far too small to call this a benchmark.</text>')
+    s = [svg_open(W, H, "Peak context per run")]
+    s.append(f'<text x="18" y="26" font-size="15" font-weight="600" fill="{INK}">Peak context per run</text>')
+    s.append(f'<text x="18" y="44" font-size="12" fill="{INK2}">Largest context window each agent occupied. Every run shown; three per task per arm.</text>')
+    s.append(legend(W - 18, 26, [(ARM_LABEL["b"], B_L), (ARM_LABEL["a"], A_L)]))
     s.append(g)
-    for i, arm in enumerate(("b", "a")):
-        if arm not in vals:
-            continue
-        bw = 96
-        bx = x0 + w * (i + 0.5) / 2 - bw / 2
-        col = B_L if arm == "b" else A_L
-        s.append(bar(bx, ys(vals[arm]), bw, y0 + h - ys(vals[arm]), col))
-        s.append(f'<text x="{bx+bw/2:.1f}" y="{ys(vals[arm])-8:.1f}" text-anchor="middle" font-size="13" font-weight="600" fill="{INK2}">{fmt(vals[arm])}</text>')
-        s.append(f'<text x="{bx+bw/2:.1f}" y="{y0+h+22}" text-anchor="middle" font-size="12" fill="{INK2}">{esc(ARM_LABEL[arm])}</text>')
+
+    tasks = [t for t in ("t1", "t2", "t3", "t4")
+             if any(r["task"] == t for r in rows)]
+    if not tasks:
+        return ""
+    slot = w / len(tasks)
+    bw = min(15.0, (slot - 26) / 7.0)
+    for ti, t in enumerate(tasks):
+        cx = x0 + slot * (ti + 0.5)
+        n = 0
+        for arm in ("b", "a"):
+            reps = sorted((r for r in rows if r["task"] == t and r["arm"] == arm),
+                          key=lambda r: r["rep"])
+            for r in reps:
+                v = float(r["peak_ctx"])
+                bx = cx - (bw * 7) / 2 + n * (bw + 2)
+                col = B_L if arm == "b" else A_L
+                s.append(bar(bx, ys(v), bw, y0 + h - ys(v), col))
+                n += 1
+            n += 1  # gutter between the two arms
+        s.append(f'<text x="{cx:.1f}" y="{y0+h+22}" text-anchor="middle" '
+                 f'font-size="12" fill="{INK2}">{esc(TASK_LABEL.get(t, t))}</text>')
+
+    fy = ys(floor)
+    s.append(f'<rect x="{x0}" y="{fy:.1f}" width="{w}" height="{y0+h-fy:.1f}" '
+             f'fill="{INK3}" opacity="0.07"/>')
+    s.append(f'<line x1="{x0}" y1="{fy:.1f}" x2="{x0+w}" y2="{fy:.1f}" '
+             f'stroke="{INK3}" stroke-width="1" stroke-dasharray="4 3"/>')
+    s.append(f'<text x="{x0}" y="{y0+h+44}" font-size="11.5" fill="{INK3}">'
+             f'shaded band = the &#8776;{fmt(floor)} fixed floor (system prompt, harness, '
+             f'tool schemas) that both arms pay before reading any project file</text>')
+
+    # the per-arm medians, stated rather than drawn, so the eye is not asked
+    # to average bars it cannot average
+    def med(arm):
+        v = sorted(float(r["peak_ctx"]) for r in rows if r["arm"] == arm)
+        return v[len(v) // 2] if v else 0
+    ma, mb = med("a"), med("b")
+    if ma and mb:
+        delta = (mb - ma) / mb * 100
+        s.append(f'<text x="{x0}" y="{y0+h+66}" font-size="11.5" fill="{INK3}">'
+                 f'median peak &#183; one CLAUDE.md {fmt(mb)} &#183; context-kit {fmt(ma)} '
+                 f'&#183; {delta:.0f}% lower, N={len(rows)} runs</text>')
     s.append("</svg>")
     return "".join(s)
 
@@ -395,47 +467,76 @@ def summary_tail(o, charts, static, gap, grades, emp, runs):
         o.append('<p>Not yet run.</p>')
         return o
 
+    def col(rows, arm, key):
+        return [float(r[key]) for r in rows if r["arm"] == arm]
+
+    def median(v):
+        v = sorted(v)
+        if not v:
+            return 0.0
+        n = len(v)
+        return v[n // 2] if n % 2 else (v[n // 2 - 1] + v[n // 2]) / 2
+
     if emp:
-        vals = {r["arm"]: float(r["tokens_total"]) for r in emp}
-        o.append(fig("05-tokens", 'Whole-workflow token totals, twelve runs per arm, identical tasks.'))
-        if "a" in vals and "b" in vals:
-            d = (1 - vals["a"] / vals["b"]) * 100
-            verdict = ("smaller" if d > 0 else "larger")
-            o.append(f'<p>The tiered arm spent <b>{abs(d):.0f}% {verdict}</b> '
-                     f'({fmt(vals["a"])} vs {fmt(vals["b"])} tokens across twelve runs each).</p>')
+        o.append(fig("05-tokens",
+                     "Peak context per run. Every run is a bar; the shaded band is the fixed "
+                     "floor both arms pay before reading anything."))
+        pa, pb = col(emp, "a", "peak_ctx"), col(emp, "b", "peak_ctx")
+        if pa and pb:
+            ma, mb = median(pa), median(pb)
+            d = (1 - ma / mb) * 100
+            o.append(f'<p>Median peak context was <b>{fmt(ma)}</b> for the tiered layout against '
+                     f'<b>{fmt(mb)}</b> for the single file &#8212; <b>{abs(d):.0f}% '
+                     f'{"lower" if d > 0 else "higher"}</b>, across {len(pa)} and {len(pb)} runs. '
+                     f'Spread was {fmt(min(pa))}&#8211;{fmt(max(pa))} and '
+                     f'{fmt(min(pb))}&#8211;{fmt(max(pb))}.</p>')
+            floor = min(pa + pb)
+            above_a, above_b = ma - floor, mb - floor
+            if above_b > 0:
+                o.append(f'<div class="caveat"><p style="margin:0"><b>Most of both bars is not the '
+                         f'layout.</b> Roughly {fmt(floor)} of every run is fixed overhead &#8212; '
+                         f'system prompt, harness, tool schemas &#8212; paid identically by both '
+                         f'arms. Measured against only the part a layout can move, the gap is '
+                         f'{fmt(above_a)} against {fmt(above_b)}. The percentage above is the '
+                         f'honest whole-window figure; this is the honest mechanism figure. '
+                         f'Neither is a benchmark at N={len(pa) + len(pb)}.</p></div>')
             if abs(d) < 10:
                 o.append('<div class="caveat"><p style="margin:0"><b>Read that as noise, not as a '
-                         'result.</b> Each agent carries a fixed overhead of roughly 50k tokens for '
-                         'its system prompt and tooling before it reads a single project file. '
-                         'A difference this size sits inside the run-to-run variation that overhead '
-                         'produces, and three repetitions cannot separate the two.</p></div>')
+                         'result.</b> A difference this size sits inside the run-to-run variation '
+                         'the fixed overhead produces, and three repetitions cannot separate '
+                         'the two.</p></div>')
 
-    if runs:
-        o.append('<h3>What the agents actually touched</h3>')
-        o.append('<p>Taken from context-kit&#8217;s own activity ledger, which records every file a '
-                 'subagent reads or writes. Attribution is by path, since each run has its own '
-                 'working copy.</p>')
-        agg = {}
-        for r in runs:
-            a = r["arm"]
-            d = agg.setdefault(a, {"runs": 0, "reads": 0, "writes": 0, "ctx": 0})
-            d["runs"] += 1; d["reads"] += int(r["reads"]); d["writes"] += int(r["writes"]); d["ctx"] += int(r["context_reads"])
-        o.append('<table><tr><th>Arm</th><th class="num">runs</th><th class="num">file reads</th>'
-                 '<th class="num">writes</th><th class="num">context-file reads</th></tr>')
-        for a in ("b", "a"):
-            if a not in agg: continue
-            d = agg[a]
-            o.append(f'<tr><td>{esc(ARM_LABEL[a])}</td><td class="num">{d["runs"]}</td>'
-                     f'<td class="num">{d["reads"]}</td><td class="num">{d["writes"]}</td>'
-                     f'<td class="num">{d["ctx"]}</td></tr>')
+        o.append('<h3>Every run</h3>')
+        o.append('<p>No means hidden. <code>peak</code> is the largest context the model held; '
+                 '<code>new</code> is material written into context across the run; '
+                 '<code>files</code> is distinct project files opened, counted from the '
+                 'transcript rather than the ledger, because agents read through '
+                 '<code>cat</code> and <code>grep</code> as often as through the file tool.</p>')
+        o.append('<table><tr><th>Task</th><th>Arm</th><th>Rep</th><th class="num">peak</th>'
+                 '<th class="num">new</th><th class="num">tool calls</th>'
+                 '<th class="num">files</th></tr>')
+        for r in sorted(emp, key=lambda r: (r["task"], r["arm"], r["rep"])):
+            o.append(f'<tr><td>{esc(TASK_LABEL.get(r["task"], r["task"]))}</td>'
+                     f'<td>{esc(ARM_LABEL[r["arm"]])}</td><td>{esc(r["rep"])}</td>'
+                     f'<td class="num">{fmt(float(r["peak_ctx"]))}</td>'
+                     f'<td class="num">{fmt(float(r["new_ctx"]))}</td>'
+                     f'<td class="num">{esc(r["tools"])}</td>'
+                     f'<td class="num">{esc(r["files"])}</td></tr>')
         o.append('</table>')
-        if "a" in agg and "b" in agg and agg["a"]["runs"] and agg["b"]["runs"]:
-            ca = agg["a"]["ctx"] / agg["a"]["runs"]; cb = agg["b"]["ctx"] / agg["b"]["runs"]
-            o.append(f'<p><b>The tradeoff the token count hides.</b> The tiered arm opened '
-                     f'{ca:.1f} context files per run against the baseline&#8217;s {cb:.1f}. '
-                     f'It reads <i>more files</i> to read <i>less text</i>. If your cost model '
-                     f'counts tool calls rather than tokens, that is a real cost and it points '
-                     f'the other way.</p>')
+
+        fa, fb = col(emp, "a", "files"), col(emp, "b", "files")
+        if fa and fb:
+            aa, ab = sum(fa) / len(fa), sum(fb) / len(fb)
+            if aa > ab:
+                o.append(f'<p><b>The tradeoff the token count hides.</b> The tiered arm opened '
+                         f'{aa:.1f} distinct files per run against the baseline&#8217;s {ab:.1f}. '
+                         f'It reads <i>more files</i> to read <i>less text</i>. If your cost model '
+                         f'counts tool calls rather than tokens, that is a real cost and it points '
+                         f'the other way.</p>')
+            else:
+                o.append(f'<p>The tiered arm opened {aa:.1f} distinct files per run against the '
+                         f'baseline&#8217;s {ab:.1f}, so on this project the layout did not cost '
+                         f'extra navigation.</p>')
 
     if grades:
         o.append('<h2>Correctness</h2>')
@@ -483,6 +584,12 @@ def summary_method(o):
     o.append('<li>Each of the 24 runs got its own clean working copy.</li>')
     o.append('<li>context-kit&#8217;s hook-injected ruleset fired for <b>both</b> arms, identically. '
              'It is a constant and cannot explain any gap between them.</li>')
+    o.append('<li>Empirical numbers come from the subagent transcripts, not from context-kit&#8217;s '
+             'own activity ledger. The ledger only sees the file-reading tool, and these agents '
+             'read through <code>cat</code> and <code>grep</code> far more often, so the ledger '
+             'undercounts by a wide margin. <code>peak</code> is '
+             '<code>input + cache_creation + cache_read</code> at its maximum over a run &#8212; '
+             'the largest the context window actually got.</li>')
     o.append('</ul>')
     o.append('<h3>What this cannot tell you</h3><ul>')
     o.append('<li><b>Three repetitions per cell.</b> Enough to notice a large effect, nowhere near '
@@ -500,7 +607,7 @@ def summary_method(o):
     o.append('<h3>Reproducing it</h3>')
     o.append('<p>Everything is in <code>ab/</code>: <code>measure-static.sh</code> for the exact '
              'numbers, <code>verify-parity.sh</code> for the fairness check, <code>factgap.sh</code> '
-             'for the withheld-facts count, <code>grade.sh</code> for correctness, '
+             'for the withheld-facts count, <code>grade.sh</code> for correctness, <code>collect-tokens.py</code> for the per-run telemetry, '
              '<code>report.py</code> to rebuild these charts. The raw TSVs every figure is drawn '
              'from are in <code>ab/results/</code>.</p>')
     o.append('</main></body></html>')

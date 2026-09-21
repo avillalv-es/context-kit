@@ -11,7 +11,7 @@ TASKS="
 t1-api-field	src/api/readings.ts,src/domain/reading.ts
 t2-billing-fix	src/domain/billing.ts
 t3-db-index	src/db/migrations/003_readings_bucket_idx.sql,src/db/readingsRepo.ts
-t4-impact	src/lib/units.ts
+t4-worker-guard	src/workers/ingest.ts,src/lib/config.ts
 "
 
 printf 'size\ttask\tarm\tbytes\test_tokens\tfiles\tdetail\n' > "$OUT"
