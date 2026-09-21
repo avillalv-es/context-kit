@@ -5,6 +5,7 @@
 # -v root=        project root (absolute)
 # -v filelist=    file holding every tracked repo path, one per line
 # -v events=      file holding the activity ledger (ts,kind,actor,target), optional
+# -v actcap=      max file nodes from the activity ledger (default 60)
 # -v generated=   ISO-8601 timestamp
 #
 # What this graphs is the CONTEXT LAYOUT, not the code. Code structure is in
@@ -383,14 +384,42 @@ END {
         addedge(aid, tid, "used", "OBSERVED")
         fired[tid] = 1
       } else if (ekind == "read" || ekind == "write") {
-        tid = "file:" etarget
-        if (etarget in bypath) tid = bypath[etarget]
-        else addnode(tid, basename(etarget), "file", etarget, 0)
-        addedge(aid, tid, (ekind == "write" ? "wrote" : "read"), "OBSERVED")
+        # Deferred: the busiest paths are picked below, once the whole
+        # ledger has been counted.
+        nact++
+        actor_of[nact] = aid; path_of[nact] = etarget; kind_of[nact] = ekind
         touched[etarget] = touched[etarget] + 1
       }
     }
     close(events)
+
+    # Cap the activity layer the way codecap caps the code layer. The hook
+    # now records bash reads, so one busy session can name several hundred
+    # distinct files; every one of them used to become a node here and the
+    # canvas became unreadable. Rank by how often a path was touched and
+    # keep the busiest, plus anything in the context manifest, which is
+    # never noise. Selection is by touch count, and a whole tier is taken or
+    # dropped together rather than split arbitrarily - so the result lands at
+    # or below the cap, sometimes well below when counts are chunky (a
+    # hundred files touched once each is all-or-nothing).
+    if (actcap == "" || actcap + 0 < 1) actcap = 60
+    maxc = 0
+    for (pth in touched) if (touched[pth] > maxc) maxc = touched[pth]
+    thr = 1
+    for (t = maxc; t >= 1; t--) {
+      c = 0
+      for (pth in touched) if (touched[pth] >= t) c++
+      if (c > actcap) { thr = t + 1; break }
+      thr = t
+    }
+    for (a = 1; a <= nact; a++) {
+      etarget = path_of[a]
+      if (!(etarget in bypath) && touched[etarget] < thr) continue
+      tid = "file:" etarget
+      if (etarget in bypath) tid = bypath[etarget]
+      else if (!(tid in nodeidx)) addnode(tid, basename(etarget), "file", etarget, 0)
+      addedge(actor_of[a], tid, (kind_of[a] == "write" ? "wrote" : "read"), "OBSERVED")
+    }
   }
 
   # --- code layer -----------------------------------------------------------

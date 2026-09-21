@@ -134,6 +134,145 @@ else
   pass "hook event ignores files outside the project"
 fi
 
+# --- 7b. the JSON decoder ---------------------------------------------------
+# The old json_field was a lone sed whose capture class stopped at the first
+# backslash. Against 1,050 real bash commands it truncated 816 of them, and
+# every fixture here was quote-free, which is exactly why nobody noticed.
+EV="$TMP/data/events/$(printf '%s' "$TMP/proj" | cksum | cut -d' ' -f1).tsv"
+# Sourcing the hook would run its dispatch and exit, so lift the function out.
+sed -n '/^json_field() {/,/^}$/p' hooks/context-kit.sh > "$TMP/jf.sh"
+jf() { ( . "$TMP/jf.sh"; json_field "$1" ) 2>/dev/null; }
+
+DEC=$(printf '%s' '{"tool_input":{"command":"grep -n \"foo bar\" a.py"}}' | jf tool_input.command)
+if [ "$DEC" = 'grep -n "foo bar" a.py' ]; then
+  pass "decoder keeps a command past its first escaped quote"
+else
+  fail "decoder truncated an escaped quote: got [$DEC]"
+fi
+
+DEC=$(printf '%s' '{"tool_input":{"command":"set -e\ncd /tmp"}}' | jf tool_input.command | tr '\n' '|')
+if [ "$DEC" = 'set -e|cd /tmp|' ]; then
+  pass "decoder expands an escaped newline"
+else
+  fail "decoder mishandled \\n: got [$DEC]"
+fi
+
+DEC=$(printf '%s' '{"a":"ABC"}' | jf a)
+if [ "$DEC" = "ABC" ]; then
+  pass "decoder resolves a \\uXXXX escape"
+else
+  fail "decoder mishandled \\uXXXX: got [$DEC]"
+fi
+
+# A decoy key of the same name must not win. The old sed matched "command"
+# anywhere in the payload, tool_response included, and preferred the last.
+DEC=$(printf '%s' '{"tool_response":{"command":"DECOY"},"tool_input":{"command":"REAL"}}' | jf tool_input.command)
+if [ "$DEC" = "REAL" ]; then
+  pass "decoder scopes a lookup to its key path"
+else
+  fail "decoder picked the wrong key: got [$DEC]"
+fi
+
+DEC=$(printf '%s' '{"a":"unterminated' | jf a)
+if [ -z "$DEC" ]; then
+  pass "decoder stays quiet on malformed JSON"
+else
+  fail "decoder emitted something for malformed input: [$DEC]"
+fi
+
+# --- 7c. bash reads reach the ledger ---------------------------------------
+# The matcher used to cover only the file tools, so across 24 measured agents
+# the ledger caught one read while the transcripts showed hundreds.
+mkdir -p "$TMP/proj/sub" 2>/dev/null
+: > "$TMP/proj/sub/read-me.txt"
+ev() { printf '%s' "$1" | CLAUDE_PLUGIN_ROOT="$PWD" CLAUDE_PLUGIN_DATA="$TMP/data" \
+       CLAUDE_PROJECT_DIR="$TMP/proj" sh hooks/context-kit.sh event >/dev/null 2>&1; }
+
+ev '{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"cat sub/read-me.txt"}}'
+if grep -q 'sub/read-me.txt' "$EV" 2>/dev/null; then
+  pass "a bash read reaches the ledger"
+else
+  fail "a bash read was not recorded"
+fi
+
+if [ "$(awk -F'\t' '$4=="sub/read-me.txt"' "$EV" 2>/dev/null | awk 'END{print NF}')" = "4" ]; then
+  pass "ledger rows carry exactly four columns"
+else
+  fail "ledger row is not four tab-separated columns"
+fi
+
+# Relative paths bypass the absolute-path guard unless they are normalized,
+# so this is the same escape as /etc/passwd wearing a different hat.
+ev '{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"cat ../../etc/passwd"}}'
+if grep -q 'passwd' "$EV" 2>/dev/null; then
+  fail "a relative path escaped the project and was recorded"
+else
+  pass "a relative path climbing out of the project is rejected"
+fi
+
+# Writing is not reading: recording `rm` as a read would be a lie.
+ev '{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"rm -rf sub"}}'
+if grep -q 'read.*sub$' "$EV" 2>/dev/null; then
+  fail "a non-reading command was recorded as a read"
+else
+  pass "only reading commands contribute reads"
+fi
+
+# --- 7d. rotation keeps what the graph reasons about ------------------------
+# context-graph.awk calls a skill "never invoked in the recorded activity"
+# from whatever survived rotation, so evicting skill events invents findings.
+ROT="$TMP/rot.tsv"
+: > "$ROT"
+i=0
+while [ "$i" -lt 4200 ]; do
+  printf '%s\tread\ts1\tf%s.txt\n' "$i" "$i" >> "$ROT"
+  i=$((i + 1))
+done
+printf '%s\tskill\ts1\tcontext-cleanup\n' 9999 >> "$ROT"
+printf '%s\tagent\ts1\texplorer\n' 9999 >> "$ROT"
+sed -n '/^rotate_events() {/,/^}$/p' hooks/context-kit.sh > "$TMP/rot.sh"
+( . "$TMP/rot.sh"; EVFILE="$ROT"; rotate_events ) 2>/dev/null
+if grep -q 'context-cleanup' "$ROT" 2>/dev/null && grep -q 'explorer' "$ROT" 2>/dev/null; then
+  pass "rotation keeps agent and skill events"
+else
+  fail "rotation evicted the agent or skill events"
+fi
+if [ "$(wc -l < "$ROT" | tr -d ' ')" -lt 4000 ]; then
+  pass "rotation actually trims the ledger"
+else
+  fail "rotation did not trim"
+fi
+
+# --- 7e. the graph reads the ledger ----------------------------------------
+# This branch of context-graph.awk had no end-to-end coverage at all.
+GEV="$TMP/gev.tsv"
+printf '1\tread\ts1\tREADME.md\n2\tskill\ts1\tcontext-cleanup\n3\tagent\ts1\texplorer\n' > "$GEV"
+GJ=$(awk -f scripts/context-graph.awk -v root="$TMP/proj" -v events="$GEV" </dev/null 2>/dev/null)
+for want in '"kind": "session"' '"kind": "skill"' '"kind": "agent"' '"kind": "file"'; do
+  case "$GJ" in
+    *"$want"*) ;;
+    *) fail "graph lost $want from the ledger" ;;
+  esac
+done
+pass "graph builds session, skill, agent and file nodes from the ledger"
+
+# The activity layer had no cap while the code layer has had one since it
+# landed; bash reads make that difference matter.
+printf '' > "$GEV"
+i=0
+while [ "$i" -lt 200 ]; do
+  printf '1\tread\ts1\tf%s.txt\n' "$i" >> "$GEV"
+  printf '1\tread\ts1\tf%s.txt\n' "$i" >> "$GEV"
+  i=$((i + 1))
+done
+NF_=$(awk -f scripts/context-graph.awk -v root="$TMP/proj" -v events="$GEV" -v actcap=20 </dev/null 2>/dev/null \
+      | tr ',' '\n' | grep -c '"kind": "file"')
+if [ "$NF_" -le 20 ]; then
+  pass "activity layer honours actcap"
+else
+  fail "activity layer emitted $NF_ file nodes against a cap of 20"
+fi
+
 # --- 8. command signatures collapse wrapper forms --------------------------
 # The whole point of the ledger is that one procedure has one signature. If
 # `sudo pytest` and `pytest` count separately, neither ever reaches the

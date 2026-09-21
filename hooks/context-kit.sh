@@ -348,6 +348,97 @@ do_mode() {
 # segment, skip VAR=value prefixes and wrapper words (with their own flags),
 # then emit "<exe> <first non-flag argument>". Adapted from graphify's
 # _bash_invokes_search, which fixes the same class of false positive.
+# Project-relative paths a bash command reads, one per line.
+#
+# The ledger was blind to these: its PostToolUse matcher only covered the
+# file tools, so across 24 agents it recorded one read while the transcripts
+# showed hundreds. Agents read with cat, sed -n and grep far more often than
+# with the file tool.
+#
+# Gated on an allow-list of readers, per command segment, so `rm x.ts` is not
+# recorded as a read and `cd /repo && cat a.ts` still is. Tokenizing stays
+# deliberately crude - quotes are dropped and the text split on whitespace -
+# because the caller's [ -f ] test is the real filter: a fragment like "foo"
+# out of a quoted regex simply is not a file. Tokens holding a $ are skipped
+# rather than guessed at, which loses "$B/x.go" and is the right trade.
+read_paths() {
+  awk -v proj="$PROJ" '
+    function is_reader(w) {
+      return (w=="cat"||w=="head"||w=="tail"||w=="less"||w=="more"||w=="sed"||
+              w=="awk"||w=="grep"||w=="egrep"||w=="fgrep"||w=="rg"||w=="ag"||
+              w=="wc"||w=="diff"||w=="cmp"||w=="od"||w=="xxd"||w=="jq"||
+              w=="yq"||w=="nl"||w=="strings"||w=="file"||w=="source"||w==".")
+    }
+    function is_wrapper(w) {
+      return (w=="sudo"||w=="doas"||w=="command"||w=="exec"||w=="nohup"||
+              w=="time"||w=="nice"||w=="ionice"||w=="env"||w=="xargs"||
+              w=="timeout"||w=="stdbuf")
+    }
+    function is_preamble(w) {
+      return (w=="cd"||w=="set"||w=="export"||w=="unset"||w=="pushd"||
+              w=="popd"||w=="shopt"||w=="umask"||w=="ulimit"||w=="alias"||
+              w=="for"||w=="while"||w=="until"||w=="if"||w=="then"||
+              w=="elif"||w=="else"||w=="fi"||w=="do"||w=="done"||w=="case"||
+              w=="esac"||w=="function"||w=="{"||w=="}"||w=="("||w==")")
+    }
+    # Lexical, not filesystem: resolve . and .. and require the result to sit
+    # inside the project. do_event relativizes only ABSOLUTE paths, so without
+    # this a relative ../../etc/passwd would reach the ledger verbatim and
+    # walk straight past the guard that rejects the absolute form.
+    function norm(p,   n, parts, out, i, k, res) {
+      if (substr(p, 1, 1) != "/") p = proj "/" p
+      n = split(p, parts, "/")
+      k = 0
+      for (i = 1; i <= n; i++) {
+        if (parts[i] == "" || parts[i] == ".") continue
+        if (parts[i] == "..") { if (k > 0) k--; else return ""; continue }
+        k++; out[k] = parts[i]
+      }
+      res = ""
+      for (i = 1; i <= k; i++) res = res "/" out[i]
+      if (index(res, proj "/") != 1) return ""
+      return substr(res, length(proj) + 2)
+    }
+    { buf = (NR == 1 ? $0 : buf "\n" $0) }
+    END {
+      gsub(/["'"'"']/, " ", buf)
+      for (r = 0; r < 8; r++) { if (!gsub(/\$\([^()]*\)/, " ", buf)) break }
+      gsub(/`[^`]*`/, " ", buf)
+      ns = split(buf, seg, /[|;&\n]+/)
+      for (s = 1; s <= ns; s++) {
+        n = split(seg[s], t, /[ \t]+/)
+        i = 1
+        while (i <= n) {
+          tok = t[i]
+          if (tok == "") { i++; continue }
+          if (tok ~ /^[A-Za-z_][A-Za-z0-9_]*=/) { i++; continue }
+          sub(/.*\//, "", tok); sub(/\.exe$/, "", tok)
+          if (is_wrapper(tolower(tok))) {
+            i++
+            while (i <= n && t[i] ~ /^-/) i++
+            continue
+          }
+          break
+        }
+        if (i > n) continue
+        exe = tolower(t[i]); sub(/.*\//, "", exe); sub(/\.exe$/, "", exe)
+        if (is_preamble(exe) || !is_reader(exe)) continue
+        for (j = i + 1; j <= n; j++) {
+          tok = t[j]
+          if (tok == "") continue
+          if (substr(tok, 1, 1) == "-") continue
+          if (substr(tok, 1, 1) == "<" || substr(tok, 1, 1) == ">") continue
+          if (tok ~ /^[A-Za-z_][A-Za-z0-9_]*=/) continue
+          if (index(tok, "$") > 0) continue
+          if (tok ~ /^[0-9]+$/) continue
+          p = norm(tok)
+          if (p != "") print p
+        }
+      }
+    }
+  '
+}
+
 signature() {
   awk '
     function is_wrapper(w) {
@@ -496,6 +587,38 @@ do_signal() {
 #
 # Records identifiers only - a tool name, a file path, a skill name, a
 # subagent type. Never arguments, never file contents, never prompt text.
+open_ledger() {
+  EVDIR="$DATA/events"
+  mkdir -p "$EVDIR" 2>/dev/null || return 1
+  EVFILE="$EVDIR/$HASH.tsv"
+  return 0
+}
+
+append_event() {
+  # A tab or newline in a value would desynchronize every later column.
+  _T="$(printf '%s' "$2" | tr '\t\n\r' '   ' | cut -c1-200)"
+  case "$_T" in ""|" "*) return 0 ;; esac
+  printf '%s\t%s\t%s\t%s\n' "$(date +%s 2>/dev/null)" "$1" "$ACTOR" "$_T" \
+    >> "$EVFILE" 2>/dev/null
+}
+
+# Trim reads first and keep agent and skill events.
+#
+# The old rotation kept the last 2000 lines of anything. Once bash reads are
+# recorded that is mostly reads, and context-graph.awk decides a skill was
+# "never invoked in the recorded activity" from whatever survived - so
+# rotation could manufacture that finding. Reads are both the bulk and the
+# most disposable, so they are what gets dropped.
+rotate_events() {
+  LINES="$(wc -l < "$EVFILE" 2>/dev/null | tr -d ' ')"
+  [ -n "$LINES" ] || return 0
+  [ "$LINES" -gt 4000 ] 2>/dev/null || return 0
+  { awk -F'\t' '$2=="agent"||$2=="skill"' "$EVFILE" 2>/dev/null | tail -n 1000
+    awk -F'\t' '$2!="agent"&&$2!="skill"' "$EVFILE" 2>/dev/null | tail -n 2000
+  } | sort -n -k1,1 > "$EVFILE.tmp" 2>/dev/null &&
+    mv "$EVFILE.tmp" "$EVFILE" 2>/dev/null
+}
+
 do_event() {
   [ "${CONTEXT_KIT_NO_SIGNALS:-}" = "1" ] && exit 0
   [ "${CONTEXT_KIT_NO_ACTIVITY:-}" = "1" ] && exit 0
@@ -536,6 +659,23 @@ do_event() {
       Skill)
         KIND="skill"; TARGET="$(printf '%s' "$IN" | json_field tool_input.skill)"
                       [ -n "$TARGET" ] || TARGET="$(printf '%s' "$IN" | json_field skill)" ;;
+      Bash)
+        # One command can read several files, so this case records its own
+        # events and returns rather than falling through to the single-target
+        # path below. sort -u collapses a file read twice in one command;
+        # [ -f ] is what rejects the tokens read_paths could not rule out,
+        # like a sed script or a quoted regex fragment.
+        CMD="$(printf '%s' "$IN" | json_field tool_input.command)"
+        [ -n "$CMD" ] || exit 0
+        open_ledger || exit 0
+        printf '%s\n' "$CMD" | strip_heredocs | read_paths | sort -u | head -n 40 |
+          while IFS= read -r P; do
+            [ -f "$PROJ/$P" ] || continue
+            append_event read "$P"
+          done
+        rotate_events
+        exit 0
+        ;;
       *) exit 0 ;;
     esac
   fi
@@ -553,18 +693,9 @@ do_event() {
       ;;
   esac
 
-  # A tab or newline in a value would desynchronize every later column.
-  TARGET="$(printf '%s' "$TARGET" | tr '\t\n\r' '   ' | cut -c1-200)"
-  case "$TARGET" in ""|" "*) exit 0 ;; esac
-
-  EVDIR="$DATA/events"
-  mkdir -p "$EVDIR" 2>/dev/null || exit 0
-  EVFILE="$EVDIR/$HASH.tsv"
-  printf '%s\t%s\t%s\t%s\n' "$(date +%s 2>/dev/null)" "$KIND" "$ACTOR" "$TARGET" >> "$EVFILE" 2>/dev/null
-  LINES="$(wc -l < "$EVFILE" 2>/dev/null | tr -d ' ')"
-  if [ -n "$LINES" ] && [ "$LINES" -gt 4000 ] 2>/dev/null; then
-    tail -n 2000 "$EVFILE" > "$EVFILE.tmp" 2>/dev/null && mv "$EVFILE.tmp" "$EVFILE" 2>/dev/null
-  fi
+  open_ledger || exit 0
+  append_event "$KIND" "$TARGET"
+  rotate_events
   exit 0
 }
 
