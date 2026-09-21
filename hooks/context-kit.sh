@@ -59,10 +59,125 @@ emit() {
   printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":"%s"}}\n' "$1" "$ESCAPED"
 }
 
-# Extract a flat string field from stdin JSON without jq. Best effort: a miss
-# yields an empty string, which every caller treats as "skip".
+# Extract a string field from stdin JSON without jq.
+#
+# The previous implementation was a single sed with the capture class
+# [^"\\]*, which stops at the first backslash or escaped quote. Measured
+# against 1,050 real Bash commands from agent transcripts, 816 of them (78%)
+# were truncated before the hook ever saw them, and 47 distinct commands
+# collapsed onto the prefix "set -e" - which reaches signature() as the
+# signature "set", passes THRESHOLD, and makes context-kit suggest a skill
+# for a shell builtin. It was also unanchored (a "command" key anywhere in
+# the payload matched, including inside tool_response) and greedy (with two
+# matches on one line the last one won).
+#
+# This is a real JSON scanner instead. Pass a bare key to take the first
+# match at any depth, or a dotted path like tool_input.command to scope it.
+# Only scalar string values are returned; a key whose value is an object,
+# array or number yields nothing, which every caller treats as "skip".
+# Malformed input yields nothing and exits 0 - a hook must never break a
+# session.
 json_field() {
-  sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\\([^\"\\\\]*\\).*/\\1/p" | head -1
+  awk -v want="$1" '
+    # %c means "this codepoint" in gawk and "this byte" in mawk and busybox
+    # awk, so one of them has to be told. WIDECHAR probes it with a literal
+    # that is two bytes of UTF-8 and one character; without this, mawk
+    # truncates \u2550 to its low byte and a box-drawing rule decodes as "P".
+    function emit(cp) {
+      if (cp < 128 || WIDECHAR) return sprintf("%c", cp)
+      if (cp < 2048) return sprintf("%c%c", 192 + int(cp / 64), 128 + (cp % 64))
+      if (cp < 65536) return sprintf("%c%c%c", 224 + int(cp / 4096),
+                                     128 + int((cp % 4096) / 64), 128 + (cp % 64))
+      return sprintf("%c%c%c%c", 240 + int(cp / 262144),
+                     128 + int((cp % 262144) / 4096),
+                     128 + int((cp % 4096) / 64), 128 + (cp % 64))
+    }
+    function hexval(h,   i, c, v, d) {
+      v = 0
+      for (i = 1; i <= length(h); i++) {
+        d = index("0123456789abcdef", tolower(substr(h, i, 1))) - 1
+        if (d < 0) return -1
+        v = v * 16 + d
+      }
+      return v
+    }
+    # Walks the JSON string whose opening quote is at s[i].
+    # decode=1 builds the value into STRVAL; decode=0 only finds the end,
+    # which keeps the scan linear over payloads we are going to discard.
+    # Sets STRNEXT past the closing quote. Returns 0 if it never closes.
+    function jstring(s, i, decode,   out, c, e, n, cp, lo) {
+      n = length(s); out = ""; i++
+      while (i <= n) {
+        c = substr(s, i, 1)
+        if (c == "\\") {
+          e = substr(s, i + 1, 1); i += 2
+          if (!decode) { if (e == "u") i += 4; continue }
+          if (e == "n") out = out "\n"
+          else if (e == "t") out = out "\t"
+          else if (e == "r") out = out "\r"
+          else if (e == "b") out = out sprintf("%c", 8)
+          else if (e == "f") out = out sprintf("%c", 12)
+          else if (e == "u") {
+            cp = hexval(substr(s, i, 4))
+            if (cp < 0) return 0
+            i += 4
+            # A high surrogate only means anything paired with its low half.
+            if (cp >= 55296 && cp <= 56319 && substr(s, i, 2) == "\\u") {
+              lo = hexval(substr(s, i + 2, 4))
+              if (lo >= 56320 && lo <= 57343) {
+                cp = 65536 + (cp - 55296) * 1024 + (lo - 56320)
+                i += 6
+              }
+            }
+            out = out emit(cp)
+          }
+          else out = out e   # \" \\ \/ and any unknown escape: keep the char
+          continue
+        }
+        if (c == "\"") { STRVAL = out; STRNEXT = i + 1; return 1 }
+        if (decode) out = out c
+        i++
+      }
+      return 0
+    }
+    function pathnow(   p, d) {
+      if (depth < 1) return ""
+      if (want !~ /\./) return key[depth]
+      p = key[1]
+      for (d = 2; d <= depth; d++) p = p "." key[d]
+      return p
+    }
+    # A JSON string cannot hold a raw newline, so every newline rejoined here
+    # is whitespace between tokens. Buffering is required: values may contain
+    # escaped newlines and the payload may be pretty-printed.
+    BEGIN { WIDECHAR = (length("é") == 1) }
+    { buf = (NR == 1 ? $0 : buf "\n" $0) }
+    END {
+      n = length(buf); depth = 0; i = 1
+      while (i <= n) {
+        c = substr(buf, i, 1)
+        if (c == "{") { depth++; type[depth] = "o"; key[depth] = ""; wantkey[depth] = 1; i++; continue }
+        if (c == "[") { depth++; type[depth] = "a"; key[depth] = ""; i++; continue }
+        if (c == "}" || c == "]") { if (depth > 0) depth--; i++; continue }
+        if (c == ",") { if (depth > 0 && type[depth] == "o") wantkey[depth] = 1; i++; continue }
+        if (c == "\"") {
+          if (depth > 0 && type[depth] == "o" && wantkey[depth]) {
+            if (!jstring(buf, i, 1)) exit 0
+            key[depth] = STRVAL; wantkey[depth] = 0
+          } else if (pathnow() == want) {
+            if (!jstring(buf, i, 1)) exit 0
+            print STRVAL
+            exit 0
+          } else {
+            if (!jstring(buf, i, 0)) exit 0
+          }
+          i = STRNEXT
+          continue
+        }
+        i++
+      }
+    }
+  ' 2>/dev/null
 }
 
 # Claim a one-time action for this project, atomically. mkdir is the POSIX
@@ -240,23 +355,31 @@ signature() {
               w=="time"||w=="nice"||w=="ionice"||w=="env"||w=="xargs"||
               w=="timeout"||w=="stdbuf")
     }
-    {
-      # Join the whole command; heredoc bodies were already stripped upstream.
-      buf = (NR==1 ? $0 : buf " " $0)
+    # Navigation and environment setup are how a command STARTS, not what it
+    # does. Keying on the first segment made `cd /repo && npm run build` sign
+    # as "cd" and `set -e; pytest` sign as "set": across 1,050 real commands
+    # that collapsed 645 distinct ones onto "cd" and 53 onto "set", and "set"
+    # cleared the repeat threshold and produced a skill suggestion for a
+    # shell builtin.
+    # Shell control words belong here too: `for f in ...; do npm run build;
+    # done` is an npm procedure, not a "for" procedure.
+    function is_preamble(w) {
+      return (w=="cd"||w=="set"||w=="export"||w=="unset"||w=="pushd"||
+              w=="popd"||w=="source"||w=="."||w=="shopt"||w=="umask"||
+              w=="ulimit"||w=="alias"||w=="for"||w=="while"||w=="until"||
+              w=="if"||w=="then"||w=="elif"||w=="else"||w=="fi"||w=="do"||
+              w=="done"||w=="case"||w=="esac"||w=="function"||w=="{"||
+              w=="}"||w=="("||w==")")
     }
-    END {
-      # Drop quoted spans - anything quoted is an argument, never the exe.
-      gsub(/'"'"'[^'"'"']*'"'"'/, " ", buf)
-      gsub(/"[^"]*"/, " ", buf)
-      # First command segment only.
-      sub(/[|;&].*/, "", buf)
-      sub(/^[ \t]+/, "", buf)
-      n = split(buf, t, /[ \t]+/)
+    # "<exe> <subcommand>" for one command segment, or "" if it holds none.
+    function seg_sig(seg,   n, t, i, tok, exe, arg, nxt) {
+      sub(/^[ \t]+/, "", seg)
+      n = split(seg, t, /[ \t]+/)
       i = 1
       while (i <= n) {
         tok = t[i]
         if (tok == "") { i++; continue }
-        # VAR=value prefix (an "=" before any slash-free trailing segment).
+        # VAR=value prefix.
         if (tok ~ /^[A-Za-z_][A-Za-z0-9_]*=/) { i++; continue }
         # Strip any directory part and a .exe suffix.
         sub(/.*\//, "", tok)
@@ -268,7 +391,7 @@ signature() {
         }
         break
       }
-      if (i > n) exit
+      if (i > n) return ""
       exe = tolower(t[i]); sub(/.*\//, "", exe); sub(/\.exe$/, "", exe)
       # A subcommand, and only a subcommand: the token immediately after the
       # exe, and only when it is a bare word. `npm run`, `git commit` and
@@ -276,12 +399,42 @@ signature() {
       # collapse; `-k auth` is a flag value and `tests/unit` is a path, and
       # keying on either would give every invocation its own signature so the
       # repeat threshold is never reached.
+      # Must be a bare word. A redirect is not a subcommand: without this,
+      # `cat > out.txt` and `cat <<EOF` signed as "cat >" and "cat <<".
       arg = ""
       if (i + 1 <= n) {
         nxt = t[i + 1]
-        if (nxt != "" && nxt !~ /^-/ && nxt !~ /[\/=]/) arg = tolower(nxt)
+        if (nxt ~ /^[A-Za-z][A-Za-z0-9_.-]*$/) arg = tolower(nxt)
       }
-      print exe (arg == "" ? "" : " " arg)
+      return exe (arg == "" ? "" : " " arg)
+    }
+    {
+      # Keep the newlines: a pasted script is many commands, and joining them
+      # with a space made the whole thing one segment, so the signature came
+      # from whatever token happened to follow a pipe deep inside it - real
+      # scripts signed as "sort" and "1".
+      buf = (NR==1 ? $0 : buf "\n" $0)
+    }
+    END {
+      # Drop quoted spans - anything quoted is an argument, never the exe.
+      gsub(/'"'"'[^'"'"']*'"'"'/, " ", buf)
+      gsub(/"[^"]*"/, " ", buf)
+      # Command substitutions are arguments too. Innermost-first so nesting
+      # unwinds; the guard stops a pathological input from spinning.
+      for (r = 0; r < 8; r++) {
+        if (!gsub(/\$\([^()]*\)/, " ", buf)) break
+      }
+      gsub(/`[^`]*`/, " ", buf)
+      ns = split(buf, seg, /[|;&\n]+/)
+      for (s = 1; s <= ns; s++) {
+        sig = seg_sig(seg[s])
+        if (sig == "") continue
+        split(sig, w, " ")
+        if (!is_preamble(w[1])) { print sig; exit }
+      }
+      # Every segment was navigation, setup or a control word. There is no
+      # procedure here to key on, so emit nothing rather than key on the
+      # scaffolding - do_signal treats empty as "skip".
     }
   '
 }
@@ -308,12 +461,18 @@ strip_heredocs() {
 # Silent and append-only. Never writes to stdout: this runs on every Bash call.
 do_signal() {
   [ "${CONTEXT_KIT_NO_SIGNALS:-}" = "1" ] && exit 0
-  CMD="$(json_field command)"
+  CMD="$(json_field tool_input.command)"
   [ -n "$CMD" ] || exit 0
   SIG="$(printf '%s\n' "$CMD" | strip_heredocs | signature | tr -cs 'a-z0-9' '-' | sed 's/^-*//;s/-*$//')"
   [ -n "$SIG" ] || exit 0
+  # Bare interpreters are denied without a -* form on purpose: `python3`
+  # alone is someone running a throwaway script, but `python3 manage.py` is a
+  # procedure and must still reach the threshold.
   case "$SIG" in
-    ls|ls-*|cd|cd-*|cat|cat-*|echo|echo-*|pwd|which|which-*|head|head-*|tail|tail-*|git-status|git-diff|git-log|grep|grep-*|find|find-*|mkdir|mkdir-*|rm|rm-*|cp|cp-*|mv|mv-*|sed|sed-*|awk|awk-*|wc|wc-*|true|exit)
+    ls|ls-*|cd|cd-*|cat|cat-*|echo|echo-*|pwd|which|which-*|head|head-*|tail|tail-*|git-status|git-diff|git-log|grep|grep-*|find|find-*|mkdir|mkdir-*|rm|rm-*|cp|cp-*|mv|mv-*|sed|sed-*|awk|awk-*|wc|wc-*|true|exit|\
+    diff|diff-*|sort|sort-*|uniq|uniq-*|cut|cut-*|tr|tr-*|touch|touch-*|chmod|chmod-*|\
+    set|export|unset|printf|test|basename|dirname|date|od|xxd|\
+    sh|bash|zsh|node|python|python3|perl|ruby)
       exit 0 ;;
   esac
   SIGDIR="$DATA/signals"
@@ -365,16 +524,18 @@ do_event() {
   if [ -z "$KIND" ]; then
     case "$TOOL" in
       Read|NotebookRead)
-        KIND="read";  TARGET="$(printf '%s' "$IN" | json_field file_path)" ;;
+        KIND="read";  TARGET="$(printf '%s' "$IN" | json_field tool_input.file_path)" ;;
       Edit|Write|NotebookEdit)
-        KIND="write"; TARGET="$(printf '%s' "$IN" | json_field file_path)" ;;
+        KIND="write"; TARGET="$(printf '%s' "$IN" | json_field tool_input.file_path)" ;;
       Task)
         KIND="agent"
-        TARGET="$(printf '%s' "$IN" | json_field subagent_type)"
+        TARGET="$(printf '%s' "$IN" | json_field tool_input.subagent_type)"
+        [ -n "$TARGET" ] || TARGET="$(printf '%s' "$IN" | json_field subagent_type)"
         [ -n "$TARGET" ] || TARGET="subagent"
         ;;
       Skill)
-        KIND="skill"; TARGET="$(printf '%s' "$IN" | json_field skill)" ;;
+        KIND="skill"; TARGET="$(printf '%s' "$IN" | json_field tool_input.skill)"
+                      [ -n "$TARGET" ] || TARGET="$(printf '%s' "$IN" | json_field skill)" ;;
       *) exit 0 ;;
     esac
   fi
