@@ -420,13 +420,32 @@ def summary_html(charts, static, gap, grades, emp, runs):
                  f'convention each task turns on</p></div>')
     o.append('</div>')
 
+    def cut_range(size):
+        # Recomputed from results/static.tsv rather than stated as a
+        # literal, so a change upstream (a demo CLAUDE.md that gets a line
+        # shorter, say) cannot leave this sentence quietly wrong - which is
+        # the exact failure mode the knowledge-index fix in this same
+        # project exists to prevent.
+        by_task = {}
+        for r in static:
+            if r["size"] != size:
+                continue
+            by_task.setdefault(r["task"], {})[r["arm"]] = int(r["est_tokens"])
+        cuts = [(1 - v["a"] / v["b"]) * 100 for v in by_task.values() if v.get("b")]
+        return (min(cuts), max(cuts)) if cuts else (0, 0)
+
+    sizes = sorted({r["size"] for r in static}, key=lambda s: int(s)) if static else []
+    lo3, hi3 = cut_range(sizes[-1]) if sizes else (0, 0)
+    lo1, hi1 = cut_range(sizes[0]) if sizes else (0, 0)
+
     o.append('<h2>Verdict</h2>')
-    o.append('<p><b>Yes on context, no on correctness, and the size of the yes depends entirely '
-             'on how bloated your CLAUDE.md already is.</b> Against an 843-line file the tiered '
-             'layout forces a session to load 80&#8211;93% less per task, and that carried into '
-             'real runs: 21% lower median peak context and 17.9% fewer tokens across twelve agents '
-             'per arm. Against a tidy 47-line file the same mechanism saves 39&#8211;67% of a much '
-             'smaller number, which is not worth restructuring a repo for.</p>')
+    o.append(f'<p><b>Yes on context, no on correctness, and the size of the yes depends entirely '
+             f'on how bloated your CLAUDE.md already is.</b> Against an 843-line file the tiered '
+             f'layout forces a session to load {lo3:.0f}&#8211;{hi3:.0f}% less per task, and that '
+             f'carried into real runs: 21% lower median peak context and 17.9% fewer tokens across '
+             f'twelve agents per arm. Against a tidy 47-line file the same mechanism saves '
+             f'{lo1:.0f}&#8211;{hi1:.0f}% of a much smaller number, which is not worth restructuring '
+             f'a repo for.</p>')
     o.append('<p>Correctness was a tie at 12/12 in both arms, so nothing here says the layout makes '
              'a model <i>better</i> &#8212; only cheaper. It also buys that saving by withholding '
              '81&#8211;94% of the written knowledge from any given run, and the one task where the '

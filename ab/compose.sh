@@ -46,15 +46,19 @@ else
       [ "$f" = "$CORE" ] && continue
       [ "$(btier "$f")" -le "$SIZE" ] || continue
       P="$(bpaths "$f")"
+      # Knowledge files (paths: *) do not get a row here. Enumerating every
+      # one directly duplicates knowledge/INDEX.md verbatim - the exact
+      # anti-pattern templates/knowledge/INDEX.md itself warns against ("one
+      # place to look, one place to update - a second copy drifts from the
+      # first") - and it defeats the index this same script writes below,
+      # which then has nothing pointing at it. templates/CLAUDE.template.md
+      # gets this right in one line: point at the index, don't restate it.
+      [ "$P" = "*" ] && continue
       NAME="$(basename "$f" .block)"
-      TITLE="$(sed -n '2p' "$f" | sed 's/^# //')"
-      if [ "$P" = "*" ]; then
-        printf '| `knowledge/%s.md` | %s - look up when relevant |\n' "$NAME" "$TITLE"
-      else
-        printf '| `.claude/rules/%s.md` | touching `%s` |\n' "$NAME" "$P"
-      fi
+      printf '| `.claude/rules/%s.md` | touching `%s` |\n' "$NAME" "$P"
     done
-    printf '\nReference material is in `knowledge/`; it costs nothing until read.\n'
+    printf '\nTopic index for everything else: `knowledge/INDEX.md`; it costs\n'
+    printf 'nothing until read.\n'
   } > "$DEST/CLAUDE.md"
 
   for f in "$BLOCKS"/*.block; do
