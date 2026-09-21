@@ -63,6 +63,15 @@ that has no real content. Target under 100 lines for a first version.
   Each pointer must state the trigger for reading, not just the path.
   "Chart mechanics are in `knowledge/charts.md`" is inert. "Read
   `knowledge/charts.md` before modifying any chart config" is not.
+  A rule earns its own pointer — each has a different `paths:` trigger, and
+  that difference is the information. `knowledge/` does not: write one line,
+  "Topic index for everything else: `knowledge/INDEX.md`", and stop. Naming
+  each knowledge file here too puts the same fact in two places, and the
+  second copy drifts from the first the moment either one changes without
+  the other. `/context-graph` flags a `knowledge/` file nothing routes to —
+  if `CLAUDE.md` names every file directly, that flag fires on `INDEX.md`
+  itself, which is a sign the pointer was skipped, not a sign to add one
+  more line naming `INDEX.md` too.
 
 Do not include: directory trees, dependency lists, architecture overviews,
 project history, or anything else derivable by looking.
