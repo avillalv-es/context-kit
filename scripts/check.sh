@@ -465,7 +465,7 @@ fi
 # --- 10. the graph builder emits parseable JSON ----------------------------
 GP="$TMP/gproj"
 rm -rf "$GP"; mkdir -p "$GP/.claude/rules" "$GP/.claude/skills/thing" "$GP/knowledge" "$GP/src"
-printf '# P\n\n[knowledge](knowledge/INDEX.md)\n' > "$GP/CLAUDE.md"
+printf '# P\n\n[knowledge](knowledge/INDEX.md)\n\nSee `.claude/rules/r.md` when touching src.\n' > "$GP/CLAUDE.md"
 printf -- '---\ndescription: Use when touching src.\npaths:\n  - "src/**"\n---\n# R\n- a rule\n' > "$GP/.claude/rules/r.md"
 printf -- '---\ndescription: Use when asked to thing.\npaths:\n  - "nowhere/**"\n---\n# Gone\n' > "$GP/.claude/rules/dead.md"
 printf -- '---\nname: thing\ndescription: Use when the user asks to thing.\n---\n# Thing\n' > "$GP/.claude/skills/thing/SKILL.md"
@@ -494,6 +494,14 @@ if CLAUDE_PLUGIN_DATA="$TMP/nodata" sh scripts/context-graph.sh build --root "$G
     grep -q '"covers"' "$GOUT/graph.json" \
       && pass "graph builder resolves rule paths against the tree" \
       || fail "graph builder emitted no covers edges"
+    # A CLAUDE.md routing table almost always names a rule in backticks
+    # (`.claude/rules/r.md`), not as a markdown link. That reference used to
+    # be dropped twice over: body_refs was never checked against real paths
+    # at all, and once it was, the leading `.` of every .claude/ path still
+    # failed the capture regex. Both are regression-tested here.
+    grep -q '"source": "tier1:CLAUDE.md", "target": "rule:r", "relation": "routes_to"' "$GOUT/graph.json" \
+      && pass "a backtick-wrapped dotfile path in tier 1 routes to the rule" \
+      || fail "tier 1 did not route to a rule named only in backticks"
   else
     fail "graph build wrote no graph.json"
   fi

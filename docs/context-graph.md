@@ -52,15 +52,24 @@ at the point of use, not in a footnote.
 
 | Relation | What it means | Tag |
 |---|---|---|
-| `routes_to` | one context file links to another | `EXTRACTED` |
+| `routes_to` | one context file links to another | `EXTRACTED` (markdown link) or `INFERRED` (backticked path) |
 | `covers` | a rule's `paths:` glob, with its real match count | `EXTRACTED` |
-| `cites` | the layout points at an ordinary repo doc as its authority | `EXTRACTED` |
+| `cites` | the layout points at an ordinary repo doc as its authority | `EXTRACTED` (markdown link) or `INFERRED` (backticked path) |
 | `mentions` | a file names a skill or command in backticks or as `/command` | `INFERRED` |
 | `spawned`, `used`, `read`, `wrote` | recorded activity | `OBSERVED` |
 
-`INFERRED` matches on an exact backticked token, never a substring, so
-`` `lean-review` `` does not also register as a mention of `lean`. It can
-still be wrong — prose is prose.
+A `CLAUDE.md` routing table almost always writes `` `.claude/rules/x.md` ``,
+not `[x](.claude/rules/x.md)` — a markdown link is the exception, not the
+rule. Both are extracted, and both resolve to the same real paths: layout
+files and ordinary repo files, project-root and directory-relative. The
+confidence tag is the only difference, and it is a real one: a link is
+unambiguous syntax that promises a reference; a backtick span is formatting
+that usually does but does not have to.
+
+`INFERRED` matches on an exact backticked token or a full path, never a
+substring, so `` `lean-review` `` does not also register as a mention of
+`lean`, and `` `units.ts` `` does not match `src/lib/units.ts` unless the
+token names the whole path. It can still be wrong — prose is prose.
 
 `OBSERVED` is a record of what happened on *one machine*, not a property of
 the repo. Two people will have different activity layers over the same
