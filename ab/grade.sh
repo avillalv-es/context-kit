@@ -61,27 +61,41 @@ grade_t3() { # new numbered migration, CONCURRENTLY, existing migrations untouch
   fi
 }
 
-grade_t4() { # guard exists AND the limit is config-driven, not a literal
-  D="$1"; F="$D/src/workers/ingest.ts"
-  grep -qiE 'byte|size|2_?000_?000|2 ?\* ?1024|maxBatch' "$F" 2>/dev/null || { echo "FAIL|no size guard"; return; }
-  # A byte literal anywhere in the worker fails outright. ingest.ts already
-  # reads cfg.ingestBatchSize for a different purpose, so "the file mentions
-  # cfg." is not evidence that THIS limit came from config.
-  if grep -qE '2_?000_?000|2 ?\* ?1024 ?\* ?1024|2097152' "$F" 2>/dev/null; then
-    echo "FAIL|byte limit hard-coded, convention says config"
-  elif grep -qE 'maxBatchBytes|MaxBytes|maxBytes|batchBytes|BATCH_BYTES' "$D/src/lib/config.ts" 2>/dev/null; then
-    echo "PASS|guard present and config-driven"
+grade_t4() { # guard exists AND the limit comes from config, not a literal
+  D="$1"; F="$D/src/workers/ingest.ts"; C="$D/src/lib/config.ts"
+  [ -f "$F" ] || { echo "FAIL|no ingest.ts"; return; }
+  grep -qE '[Bb]yte' "$F" 2>/dev/null || { echo "FAIL|no byte-size guard"; return; }
+  # A 2MB literal in the worker is the failure the convention names, whatever
+  # else the file does. Underscores are stripped first so 2_097_152, 2097152
+  # and 2_000_000 are all caught. ingest.ts already reads cfg.ingestBatchSize
+  # for an unrelated purpose, so "the file mentions cfg." proves nothing.
+  if tr -d '_' < "$F" 2>/dev/null | grep -qE '2000000|2097152|2 ?\* ?1024 ?\* ?1024'; then
+    echo "FAIL|byte limit hard-coded in the worker, convention says config"; return
+  fi
+  # Name-agnostic, but bound to a DECLARED key: an interface member or object
+  # property, anchored at line start so prose in a comment cannot supply it.
+  # The pristine config.ts carries no *Bytes member, so any found is this
+  # task's. Pinning an expected name would fail correct solutions that chose
+  # a different one.
+  KEY="$(grep -oE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[Bb]ytes[A-Za-z0-9_]*[[:space:]]*:' "$C" 2>/dev/null \
+         | head -1 | tr -d ' \t:')"
+  [ -n "$KEY" ] || { echo "FAIL|no byte limit declared in config"; return; }
+  if grep -q "$KEY" "$F" 2>/dev/null; then
+    echo "PASS|guard present, limit from config.$KEY"
   else
-    echo "FAIL|no byte limit in config"
+    echo "FAIL|config declares $KEY but the worker never reads it"
   fi
 }
 
+# RUNS is overridable so the grader can be validated against known-good and
+# known-bad solutions rather than trusted.
+RUNS="${RUNS:-$AB/runs}"
 ARMS="${ARMS:-a b}"
 REPS="${REPS:-1 2 3}"
 for T in t1 t2 t3 t4; do
   for A in $ARMS; do
     for R in $REPS; do
-      D="$AB/runs/$T-$A-r$R"
+      D="$RUNS/$T-$A-r$R"
       [ -d "$D" ] || continue
       case "$T" in
         t1) G="$(grade_t1 "$D")" ;;

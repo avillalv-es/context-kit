@@ -306,6 +306,7 @@ def build():
     gap = tsv("factgap.tsv")
     grades = tsv("grades.tsv")
     emp = tsv("empirical.tsv")
+    wtot = tsv("workflow-totals.tsv")
     runs = tsv("runs.tsv")
     charts = {
         "01-curve": chart_curve(static) if static else "",
@@ -320,7 +321,7 @@ def build():
             (OUT / f"{name}.html").write_text(
                 f'<!DOCTYPE html><meta charset="utf-8">'
                 f'<body style="margin:0;padding:0;overflow:hidden;background:{SURF}">{svg}</body>')
-    return charts, static, gap, grades, emp, runs
+    return charts, static, gap, grades, emp, wtot
 
 
 if __name__ == "__main__":
@@ -418,6 +419,18 @@ def summary_html(charts, static, gap, grades, emp, runs):
                  f'<p style="margin:4px 0 0;font-size:13px">tiered vs monolithic, graded on the '
                  f'convention each task turns on</p></div>')
     o.append('</div>')
+
+    o.append('<h2>Verdict</h2>')
+    o.append('<p><b>Yes on context, no on correctness, and the size of the yes depends entirely '
+             'on how bloated your CLAUDE.md already is.</b> Against an 843-line file the tiered '
+             'layout forces a session to load 80&#8211;93% less per task, and that carried into '
+             'real runs: 21% lower median peak context and 17.9% fewer tokens across twelve agents '
+             'per arm. Against a tidy 47-line file the same mechanism saves 39&#8211;67% of a much '
+             'smaller number, which is not worth restructuring a repo for.</p>')
+    o.append('<p>Correctness was a tie at 12/12 in both arms, so nothing here says the layout makes '
+             'a model <i>better</i> &#8212; only cheaper. It also buys that saving by withholding '
+             '81&#8211;94% of the written knowledge from any given run, and the one task where the '
+             'agent had to go hunting is the one task where the advantage disappeared.</p>')
 
     o.append('<h2>What was measured, and how hard the number is</h2>')
     o.append('<p>Two layers, and they are not equally strong. The deterministic layer is exact and '
@@ -518,6 +531,53 @@ def summary_tail(o, charts, static, gap, grades, emp, runs):
                          'the fixed overhead produces, and three repetitions cannot separate '
                          'the two.</p></div>')
 
+        # Per task, does the gap actually separate? Overlapping ranges mean the
+        # two arms are not distinguishable on that task, whatever the means say.
+        if runs:
+            tk = {r["arm"]: (int(r["subagent_tokens"]), int(r["tool_uses"])) for r in runs}
+            if "a" in tk and "b" in tk:
+                (ta, ua), (tb, ub) = tk["a"], tk["b"]
+                o.append('<h3>The whole-workflow total, measured independently</h3>')
+                o.append(f'<p>The two arms ran as two workflows, each reporting its own total. '
+                         f'That figure is produced by the runner rather than by anything in this '
+                         f'directory, so it is a check on the per-run numbers above rather than a '
+                         f'restatement of them: <b>{fmt(tb)}</b> tokens across arm B&#8217;s twelve '
+                         f'agents against <b>{fmt(ta)}</b> across arm A&#8217;s &#8212; '
+                         f'<b>{100 * (1 - ta / tb):.1f}% lower</b> &#8212; while arm A made '
+                         f'<b>{ua}</b> tool calls to arm B&#8217;s <b>{ub}</b>, '
+                         f'<b>{100 * (ua / ub - 1):.0f}% more</b>. Fewer tokens, more calls: the '
+                         f'same tradeoff the per-run file counts show.</p>')
+
+        o.append('<h3>Where the gap holds, and where it does not</h3>')
+        o.append('<table><tr><th>Task</th><th class="num">one CLAUDE.md</th>'
+                 '<th class="num">context-kit</th><th>separates?</th></tr>')
+        for t in ("t1", "t2", "t3", "t4"):
+            va = [float(r["peak_ctx"]) for r in emp if r["task"] == t and r["arm"] == "a"]
+            vb = [float(r["peak_ctx"]) for r in emp if r["task"] == t and r["arm"] == "b"]
+            if not va or not vb:
+                continue
+            clean = max(va) < min(vb)
+            o.append(f'<tr><td>{esc(TASK_LABEL.get(t, t))}</td>'
+                     f'<td class="num">{fmt(min(vb))}&#8211;{fmt(max(vb))}</td>'
+                     f'<td class="num">{fmt(min(va))}&#8211;{fmt(max(va))}</td>'
+                     f'<td class="{"pass" if clean else "fail"}">'
+                     f'{"no overlap" if clean else "ranges overlap"}</td></tr>')
+        o.append('</table>')
+        t4a = [float(r["peak_ctx"]) for r in emp if r["task"] == "t4" and r["arm"] == "a"]
+        t4b = [float(r["peak_ctx"]) for r in emp if r["task"] == "t4" and r["arm"] == "b"]
+        s3 = [r for r in static if r["size"] == "3" and r["task"].startswith("t4")]
+        if t4a and t4b and not (max(t4a) < min(t4b)) and s3:
+            sa = min(int(r["est_tokens"]) for r in s3 if r["arm"] == "a")
+            sb = max(int(r["est_tokens"]) for r in s3 if r["arm"] == "b")
+            o.append(f'<div class="caveat"><p style="margin:0"><b>The task where the layout '
+                     f'should have won biggest is the one where it did not.</b> On the worker '
+                     f'guard the deterministic saving is the largest of the four &#8212; '
+                     f'{fmt(sa)} against {fmt(sb)} forced tokens, a {100 * (1 - sa / sb):.0f}% cut '
+                     f'&#8212; yet the measured ranges overlap. That task needed the agent to go '
+                     f'looking, and the tiered arm went looking harder: it opened more files to '
+                     f'find what the single file simply had in front of it. A layout only saves '
+                     f'what the model does not then go and fetch by hand.</p></div>')
+
         o.append('<h3>Every run</h3>')
         o.append('<p>No means hidden. <code>peak</code> is the largest context the model held; '
                  '<code>new</code> is material written into context across the run; '
@@ -581,7 +641,21 @@ def summary_tail(o, charts, static, gap, grades, emp, runs):
                          f'run {esc(g["rep"])} &#8212; {esc(g["reason"])}</li>')
             o.append('</ul>')
         else:
-            o.append('<p>No run in either arm broke the convention its task turned on.</p>')
+            o.append('<p><b>A tie: every run in both arms followed its convention.</b> That includes '
+                 'the billing fix, which was built to be adversarial to the tiered layout &#8212; '
+                 'the tariff rule sits behind a <code>paths:</code> glob that does not cover the '
+                 'file the task edits. The predicted failure mode did not appear. On this project '
+                 'the layout changed what a run costs, not whether it is right.</p>')
+        o.append('<div class="caveat"><p style="margin:0"><b>An all-green chart is only worth '
+                 'as much as the grader behind it.</b> This one was checked against solutions '
+                 'written to be wrong in exactly the way each task invites &#8212; raw Wh in the '
+                 'new field, <code>active[0]</code> left in place, an edited migration, a '
+                 'hard-coded byte limit. It scores those 0/4 and a correct set 4/4. Two false '
+                 'passes found during that check were fixed before these runs were graded: the '
+                 'unit test matched <code>toKwh</code> anywhere in the file rather than in the '
+                 'new field, and the worker test accepted a pre-existing <code>cfg.</code> '
+                 'reference as evidence the limit came from config. Re-run it with '
+                 '<code>RUNS=&lt;dir&gt; sh grade.sh</code>.</p></div>')
     return o
 
 
