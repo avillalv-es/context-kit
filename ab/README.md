@@ -40,6 +40,45 @@ agents read through `cat` and `grep` far more often, so it undercounts badly.
 
 `results/` holds the raw TSVs every chart is drawn from.
 
+## Against a real repository
+
+Everything above measures `meterflow`, which was written for the test. Its
+knowledge sorts unusually cleanly into areas, and that is exactly the
+condition the tiered layout is best at — so the numbers are the friendly end
+of the range, and the writeup says so.
+
+`measure-repo.sh` points the same deterministic measurement at a real repo:
+
+```sh
+sh measure-repo.sh <baseline-dir>                  # what the repo costs today
+sh measure-repo.sh <baseline-dir> <tiered-dir>     # both arms
+```
+
+Two things differ from the meterflow run, and both make the result harder to
+flatter:
+
+**Tasks come from git history, not from me.** On meterflow I chose the four
+tasks, which is a degree of freedom a real repo does not need. Here each of
+the last N commits contributes its changed-file set as one task. Merges,
+bulk commits above a fixed threshold, and the root commit drop out — the
+rule is set before the run, not after seeing which way it moves the answer.
+
+**Freeze the sample before building the layout.** `repo-sample.tsv` is
+written first and is the input to both arms. A tiered layout generated while
+looking at the commits it will be scored on can be routed to flatter itself,
+so the order is: draw the sample, commit it, then generate the layout from
+the repo's existing `CLAUDE.md` alone.
+
+The headline is not the token reduction. It is **routing misses**: the share
+of commits where no rule's `paths:` glob matched anything the commit touched.
+Those commits still look cheap, because the router is small — but the agent
+was handed no area knowledge at all. On meterflow that number is 0% by
+construction. On a real repo it is the rate at which the layout quietly
+withholds, and it is the number worth acting on.
+
+`repo-sample.tsv` carries commit SHAs and file paths, so it is gitignored;
+`repo-static.tsv` is aggregates only and is the half that can be shared.
+
 ## Layers
 
 **Layer 1, deterministic.** Exactly how many bytes of project context each

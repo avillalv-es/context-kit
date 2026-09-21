@@ -4,3 +4,7 @@ build/
 runs/
 __pycache__/
 *.pyc
+
+# Holds commit SHAs and file paths from whatever repo was measured.
+# The aggregate (results/repo-static.tsv) is the shareable half.
+results/repo-sample.tsv

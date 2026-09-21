@@ -380,6 +380,42 @@ else
   fail "npm run and npm ci did not stay distinct"
 fi
 
+# --- 8b. measure-repo picks tasks from history, and spots a routing miss ---
+# The point of this script is that it works on a real repo, where nobody gets
+# to choose which changes it is scored on. A smoke test against a throwaway
+# git history is enough to catch the two ways it can be wrong: sampling
+# nothing, and reporting a clean sweep when a commit matched no rule.
+MR="$TMP/mr"
+mkdir -p "$MR/base/src" "$MR/tier/.claude/rules"
+printf 'monolith line\n%.0s' $(seq 1 40) > "$MR/base/CLAUDE.md"
+printf 'router\n' > "$MR/tier/CLAUDE.md"
+printf 'paths:\n  - "src/**"\n---\nthe src rule\n' > "$MR/tier/.claude/rules/10-src.md"
+mkdir -p "$MR/tier/src"
+( cd "$MR/base" && git init -q . && printf 'a\n' > src/a.ts && printf 'b\n' > elsewhere.md &&
+  git add -A && git -c user.email=t@t -c user.name=t commit -qm init &&
+  printf 'aa\n' >> src/a.ts && git add -A && git -c user.email=t@t -c user.name=t commit -qm "covered" &&
+  printf 'bb\n' >> elsewhere.md && git add -A && git -c user.email=t@t -c user.name=t commit -qm "uncovered"
+) >/dev/null 2>&1
+MROUT=$(sh ab/measure-repo.sh "$MR/base" "$MR/tier" --commits 10 --out "$MR/out" 2>&1)
+# Two, not three: the root commit has no parent to diff against, so it
+# yields no file list and drops out.
+case "$MROUT" in
+  *"2 sampled"*) pass "measure-repo samples commits from history" ;;
+  *) fail "measure-repo did not sample the expected commits" ;;
+esac
+# The commit touching only elsewhere.md matches no rule; the one touching
+# src/a.ts does. A report of zero misses would mean the check cannot see them.
+case "$MROUT" in
+  *"routing misses  0 of"*) fail "measure-repo missed a commit that matched no rule" ;;
+  *"routing misses"*) pass "measure-repo counts commits that matched no rule" ;;
+  *) fail "measure-repo printed no routing-miss line" ;;
+esac
+if [ -f "$MR/out/repo-static.tsv" ]; then
+  pass "measure-repo writes its aggregate TSV"
+else
+  fail "measure-repo wrote no aggregate"
+fi
+
 # --- 9. the sh and ps1 twins handle the same actions -----------------------
 # They are registered for the same events, so an action one of them silently
 # drops is a feature that exists on Linux and not on Windows.
