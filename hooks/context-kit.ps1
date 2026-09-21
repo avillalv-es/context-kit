@@ -67,13 +67,50 @@ function Get-HookInput {
   return $script:HookInput
 }
 
+# Takes a bare key or a dotted path, matching the sh side. ConvertFrom-Json
+# has already decoded the escapes, so there is no decoder here to mirror -
+# only the scoping, so a "command" key inside tool_response cannot win.
 function Get-JsonField([string]$Name) {
   $obj = Get-HookInput
   if (-not $obj) { return '' }
   try {
-    if ($Name -eq 'command') { return [string]$obj.tool_input.command }
-    return [string]$obj.$Name
+    $cur = $obj
+    foreach ($part in $Name.Split('.')) {
+      if ($null -eq $cur) { return '' }
+      $cur = $cur.$part
+    }
+    if ($null -eq $cur) { return '' }
+    if ($cur -is [array] -or $cur -is [psobject] -and -not ($cur -is [string])) {
+      if (-not ($cur -is [string])) { return '' }
+    }
+    return [string]$cur
   } catch { return '' }
+}
+
+# Lexical only - Resolve-Path would follow a link and touch the disk. Returns
+# '' for anything that lands outside the project, which is the guard: the old
+# code relativized absolute paths and let a RELATIVE ../../etc/passwd through
+# untouched, straight past the check that rejects the absolute form.
+function Resolve-ProjectRelative([string]$Path, [string]$Base) {
+  if (-not $Path) { return '' }
+  $p = $Path -replace '\\', '/'
+  $np = ($Proj -replace '\\', '/').TrimEnd('/')
+  $b = if ($Base) { ($Base -replace '\\', '/').TrimEnd('/') } else { $np }
+  if ($p -notmatch '^([A-Za-z]:)?/') { $p = "$b/$p" }
+  $drive = ''
+  if ($p -match '^([A-Za-z]:)(/.*)$') { $drive = $Matches[1]; $p = $Matches[2] }
+  $out = New-Object System.Collections.Generic.List[string]
+  foreach ($seg in $p.Split('/')) {
+    if ($seg -eq '' -or $seg -eq '.') { continue }
+    if ($seg -eq '..') {
+      if ($out.Count -eq 0) { return '' }
+      $out.RemoveAt($out.Count - 1); continue
+    }
+    $out.Add($seg)
+  }
+  $abs = $drive + '/' + ($out -join '/')
+  if (-not $abs.StartsWith($np + '/', [StringComparison]::OrdinalIgnoreCase)) { return '' }
+  return $abs.Substring($np.Length + 1)
 }
 
 # Filters rules.md to the active level. Lines tagged [lite]/[full]/[ultra] are
@@ -236,6 +273,41 @@ function Invoke-Mode {
 # plus a bare-word subcommand. `pytest -k auth`, `sudo pytest -q` and
 # `env CI=1 pytest` all collapse onto `pytest`; `npm run` stays distinct from
 # `npm ci`. Adapted from graphify's _bash_invokes_search.
+function Test-Preamble([string]$W) {
+  return @('cd','set','export','unset','pushd','popd','source','.','shopt',
+           'umask','ulimit','alias','for','while','until','if','then','elif',
+           'else','fi','do','done','case','esac','function','{','}','(',')'
+          ) -contains $W
+}
+
+# '<exe>-<subcommand>' for one command segment, or '' if it holds none.
+function Get-SegmentSignature([string]$Seg, [string[]]$Wrappers) {
+  $tokens = @($Seg.Trim() -split '\s+' | Where-Object { $_ })
+  $i = 0
+  while ($i -lt $tokens.Count) {
+    $tok = $tokens[$i]
+    if ($tok -match '^[A-Za-z_][A-Za-z0-9_]*=') { $i++; continue }
+    $bare = ($tok -replace '.*[\\/]', '') -replace '\.exe$', ''
+    if ($Wrappers -contains $bare.ToLower()) {
+      $i++
+      while ($i -lt $tokens.Count -and $tokens[$i].StartsWith('-')) { $i++ }
+      continue
+    }
+    break
+  }
+  if ($i -ge $tokens.Count) { return '' }
+  $exe = ((($tokens[$i]) -replace '.*[\\/]', '') -replace '\.exe$', '').ToLower()
+  $arg = ''
+  if ($i + 1 -lt $tokens.Count) {
+    # Must be a bare word. A redirect is not a subcommand: without this,
+    # 'cat > out.txt' signed as 'cat-' and 'cat <<EOF' as 'cat--'.
+    $nxt = $tokens[$i + 1]
+    if ($nxt -match '^[A-Za-z][A-Za-z0-9_.-]*$') { $arg = $nxt.ToLower() }
+  }
+  if ($arg) { return "$exe-$arg" }
+  return $exe
+}
+
 function Get-CommandSignature([string]$Cmd) {
   if (-not $Cmd) { return '' }
   $wrappers = @('sudo','doas','command','exec','nohup','time','nice','ionice',
@@ -259,44 +331,138 @@ function Get-CommandSignature([string]$Cmd) {
   # Anything quoted is an argument, never the executable.
   $text = $text -replace "'[^']*'", ' '
   $text = $text -replace '"[^"]*"', ' '
-  $text = ($text -split '[|;&]')[0].Trim()
-  if (-not $text) { return '' }
+  # Command substitutions are arguments too, innermost first.
+  for ($r = 0; $r -lt 8; $r++) {
+    $before = $text
+    $text = $text -replace '\$\([^()]*\)', ' '
+    if ($text -eq $before) { break }
+  }
+  $text = $text -replace '`[^`]*`', ' '
 
-  $tokens = @($text -split '\s+' | Where-Object { $_ })
-  $i = 0
-  while ($i -lt $tokens.Count) {
-    $tok = $tokens[$i]
-    if ($tok -match '^[A-Za-z_][A-Za-z0-9_]*=') { $i++; continue }
-    $bare = ($tok -replace '.*[\\/]', '') -replace '\.exe$', ''
-    if ($wrappers -contains $bare.ToLower()) {
-      $i++
-      while ($i -lt $tokens.Count -and $tokens[$i].StartsWith('-')) { $i++ }
+  # Newline separates commands exactly as ';' does, and the first segment
+  # that does work is the signature - not the cd or the set -e in front of
+  # it. Keying on the first segment collapsed 645 distinct commands onto
+  # 'cd' and 53 onto 'set', and 'set' cleared the suggestion threshold.
+  foreach ($seg in ($text -split "[`n;|&]+")) {
+    $sig = Get-SegmentSignature $seg $wrappers
+    if ($sig) {
+      $word = ($sig -split '-')[0]
+      if (-not (Test-Preamble $word)) {
+        return ($sig -replace '[^a-z0-9]+', '-').Trim('-')
+      }
+    }
+  }
+  # Only scaffolding: no procedure here to key on.
+  return ''
+}
+
+# Project-relative paths a bash command reads. Mirrors read_paths() in the sh
+# twin: gated on an allow-list of readers per segment, crude tokenizing, and
+# the caller's file test as the real filter.
+function Get-ReadPaths([string]$Cmd) {
+  $out = New-Object System.Collections.Generic.List[string]
+  if (-not $Cmd) { return $out }
+  $readers = @('cat','head','tail','less','more','sed','awk','gawk','mawk',
+               'grep','egrep','fgrep','rg','ag','wc','diff','cmp','od','xxd',
+               'jq','yq','nl','strings','file','source','.')
+  $scriptFirst = @('sed','awk','gawk','mawk','grep','egrep','fgrep','rg','ag')
+  $wrappers = @('sudo','doas','command','exec','nohup','time','nice','ionice',
+                'env','xargs','timeout','stdbuf')
+  $text = $Cmd -replace '["'']', ' '
+  for ($r = 0; $r -lt 8; $r++) {
+    $before = $text
+    $text = $text -replace '\$\([^()]*\)', ' '
+    if ($text -eq $before) { break }
+  }
+  $text = $text -replace '`[^`]*`', ' '
+  # Give redirect operators their own token so 'cat a>b' parses like 'cat a > b'.
+  $text = $text -replace '([0-9]*>>?|<)', ' $1 '
+
+  $base = ($Proj -replace '\\', '/').TrimEnd('/')
+  foreach ($seg in ($text -split "[`n;|&]+")) {
+    $tokens = @($seg.Trim() -split '\s+' | Where-Object { $_ })
+    $i = 0
+    while ($i -lt $tokens.Count) {
+      $tok = $tokens[$i]
+      if ($tok -match '^[A-Za-z_][A-Za-z0-9_]*=') { $i++; continue }
+      $bare = ($tok -replace '.*[\\/]', '') -replace '\.exe$', ''
+      if ($wrappers -contains $bare.ToLower()) {
+        $i++
+        while ($i -lt $tokens.Count -and $tokens[$i].StartsWith('-')) { $i++ }
+        continue
+      }
+      break
+    }
+    if ($i -ge $tokens.Count) { continue }
+    $exe = ((($tokens[$i]) -replace '.*[\\/]', '') -replace '\.exe$', '').ToLower()
+
+    # A cd moves the base; one we cannot resolve ends the walk, because a
+    # path measured from the wrong root is worse than a missing one.
+    if ($exe -eq 'cd') {
+      $arg = ''
+      for ($j = $i + 1; $j -lt $tokens.Count; $j++) { $arg = $tokens[$j]; break }
+      if (-not $arg -or $arg.Contains('$')) { return $out }
+      $moved = Resolve-ProjectRelative $arg $base
+      if ($moved -eq '') {
+        $np = ($Proj -replace '\\', '/').TrimEnd('/')
+        if ((($arg -replace '\\', '/').TrimEnd('/')) -eq $np) { $base = $np; continue }
+        return $out
+      }
+      $base = (($Proj -replace '\\', '/').TrimEnd('/')) + '/' + $moved
       continue
     }
-    break
-  }
-  if ($i -ge $tokens.Count) { return '' }
+    if ((Test-Preamble $exe) -or -not ($readers -contains $exe)) { continue }
 
-  $exe = ((($tokens[$i]) -replace '.*[\\/]', '') -replace '\.exe$', '').ToLower()
-  $arg = ''
-  if ($i + 1 -lt $tokens.Count) {
-    $nxt = $tokens[$i + 1]
-    # A subcommand, and only a subcommand: a flag value or a path would give
-    # every invocation its own signature.
-    if ($nxt -and -not $nxt.StartsWith('-') -and $nxt -notmatch '[/=\\]') { $arg = $nxt.ToLower() }
+    $pend = ''; $skipNext = $false; $nop = 0; $sawPat = $false; $noRead = $false
+    for ($j = $i + 1; $j -lt $tokens.Count; $j++) {
+      $tok = $tokens[$j]
+      if ($tok -match '^[0-9]*>>?$') { $pend = 'w'; continue }
+      if ($tok -eq '<') { $pend = 'r'; continue }
+      if ($pend -eq 'w') { $pend = ''; continue }
+      if ($pend -eq 'r') {
+        $pend = ''
+        $rel = Get-Candidate $tok $base
+        if ($rel -and -not $out.Contains($rel)) { $out.Add($rel) }
+        continue
+      }
+      if ($tok.StartsWith('-')) {
+        if ($tok -eq '-e' -or $tok -eq '--regexp') { $sawPat = $true; $skipNext = $true }
+        elseif ($tok -eq '-f' -or $tok -eq '--file') { $sawPat = $true; $pend = 'r' }
+        elseif ($tok -match '^--(regexp|file)=') { $sawPat = $true }
+        elseif ($exe -eq 'sed' -and $tok -match '^-[A-Za-z]*i') { $noRead = $true }
+        continue
+      }
+      if ($skipNext) { $skipNext = $false; continue }
+      $nop++
+      if ($noRead) { continue }
+      if (($scriptFirst -contains $exe) -and -not $sawPat -and $nop -eq 1) { continue }
+      $rel = Get-Candidate $tok $base
+      if ($rel -and -not $out.Contains($rel)) { $out.Add($rel) }
+    }
   }
-  $sig = if ($arg) { "$exe-$arg" } else { $exe }
-  return ($sig -replace '[^a-z0-9]+', '-').Trim('-')
+  return $out
+}
+
+function Get-Candidate([string]$Tok, [string]$Base) {
+  if (-not $Tok) { return '' }
+  if ($Tok -match '^[A-Za-z_][A-Za-z0-9_]*=') { return '' }
+  if ($Tok.Contains('$')) { return '' }
+  if ($Tok -match '^[0-9]+$') { return '' }
+  return (Resolve-ProjectRelative $Tok $Base)
 }
 
 # Silent and append-only. Never writes to stdout: this runs on every Bash call.
 function Invoke-Signal {
   if ($env:CONTEXT_KIT_NO_SIGNALS -eq '1') { exit 0 }
-  $cmd = Get-JsonField 'command'
+  $cmd = Get-JsonField 'tool_input.command'
   if (-not $cmd) { exit 0 }
   $sig = Get-CommandSignature $cmd
   if (-not $sig) { exit 0 }
-  $stop = @('ls','cd','cat','echo','pwd','which','head','tail','grep','find','mkdir','rm','cp','mv','sed','awk','wc','true','exit','git-status','git-diff','git-log')
+  # Bare interpreters are listed without a compound form on purpose:
+  # 'python3' alone is a throwaway script, 'python3 manage.py' is a procedure.
+  $stop = @('ls','cd','cat','echo','pwd','which','head','tail','grep','find','mkdir','rm','cp','mv','sed','awk','wc','true','exit','git-status','git-diff','git-log',
+            'diff','sort','uniq','cut','tr','touch','chmod','set','export','unset','printf','test','basename','dirname','date','od','xxd',
+            'sh','bash','zsh','node','python','python3','perl','ruby')
   $firstWord = ($sig -split '-')[0]
   if ($stop -contains $sig -or $stop -contains $firstWord) { exit 0 }
 
@@ -357,41 +523,68 @@ function Invoke-Event {
         $target = [string]$obj.tool_input.subagent_type
         if (-not $target) { $target = 'subagent' }
       }
+      'Bash'         {
+        # One command can read several files, so this arm records its own
+        # events and returns. Test-Path is what rejects the tokens
+        # Get-ReadPaths could not rule out, like a sed script.
+        $cmd = [string]$obj.tool_input.command
+        if (-not $cmd) { exit 0 }
+        $n = 0
+        foreach ($rel in (Get-ReadPaths $cmd)) {
+          if ($n -ge 40) { break }
+          $full = Join-Path $Proj $rel
+          if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { continue }
+          Add-LedgerEvent 'read' $actor $rel
+          $n++
+        }
+        Compress-Ledger
+        exit 0
+      }
       default { exit 0 }
     }
   }
   if (-not $target) { exit 0 }
 
   # Paths are stored project-relative so the ledger stays portable and no
-  # machine-specific prefix reaches the graph or the vault.
+  # machine-specific prefix reaches the graph or the vault. The guard also
+  # rejects anything that resolves outside the project.
   if ($kind -eq 'read' -or $kind -eq 'write') {
-    $normTarget = $target -replace '\\', '/'
-    $normProj = ($Proj -replace '\\', '/').TrimEnd('/')
-    if ($normTarget.StartsWith($normProj + '/', [StringComparison]::OrdinalIgnoreCase)) {
-      $target = $normTarget.Substring($normProj.Length + 1)
-    } elseif ($normTarget -match '^([A-Za-z]:)?/') {
-      exit 0  # outside the project: not ours to record
-    } else {
-      $target = $normTarget
-    }
+    $target = Resolve-ProjectRelative $target ''
+    if (-not $target) { exit 0 }
   }
 
-  # A tab or newline in a value would desynchronize every later column.
-  $target = ($target -replace "[`t`r`n]", ' ').Trim()
-  if ($target.Length -gt 200) { $target = $target.Substring(0, 200) }
-  if (-not $target) { exit 0 }
+  Add-LedgerEvent $kind $actor $target
+  Compress-Ledger
+  exit 0
+}
 
+function Get-LedgerPath {
   $evDir = Join-Path $Data 'events'
   if (-not (Test-Path $evDir)) { New-Item -ItemType Directory -Force -Path $evDir | Out-Null }
-  $evFile = Join-Path $evDir "$Hash.tsv"
-  $stamp = [int][double]::Parse((Get-Date -UFormat %s))
-  Add-Content -Path $evFile -Value "$stamp`t$kind`t$actor`t$target"
+  return (Join-Path $evDir "$Hash.tsv")
+}
 
+function Add-LedgerEvent([string]$Kind, [string]$Actor, [string]$Target) {
+  # A tab or newline in a value would desynchronize every later column.
+  $t = ($Target -replace "[`t`r`n]", ' ').Trim()
+  if ($t.Length -gt 200) { $t = $t.Substring(0, 200) }
+  if (-not $t) { return }
+  $stamp = [int][double]::Parse((Get-Date -UFormat %s))
+  Add-Content -Path (Get-LedgerPath) -Value "$stamp`t$Kind`t$Actor`t$t"
+}
+
+# Trim reads first and keep agent and skill events: the graph reads "never
+# invoked in the recorded activity" off whatever survived, so a burst of
+# reads evicting the skill rows would manufacture that finding.
+function Compress-Ledger {
+  $evFile = Get-LedgerPath
+  if (-not (Test-Path $evFile)) { return }
   $lines = @(Get-Content $evFile)
-  if ($lines.Count -gt 4000) {
-    Set-Content -Path $evFile -Value ($lines | Select-Object -Last 2000)
-  }
-  exit 0
+  if ($lines.Count -le 4000) { return }
+  $keep = @($lines | Where-Object { $_ -match "^[^`t]*`t(agent|skill)`t" } | Select-Object -Last 1000)
+  $rest = @($lines | Where-Object { $_ -notmatch "^[^`t]*`t(agent|skill)`t" } | Select-Object -Last 2000)
+  $merged = @($keep + $rest) | Sort-Object { [int](($_ -split "`t")[0]) }
+  Set-Content -Path $evFile -Value $merged
 }
 
 switch ($Action) {

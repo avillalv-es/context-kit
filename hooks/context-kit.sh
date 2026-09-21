@@ -361,6 +361,30 @@ do_mode() {
 # because the caller's [ -f ] test is the real filter: a fragment like "foo"
 # out of a quoted regex simply is not a file. Tokens holding a $ are skipped
 # rather than guessed at, which loses "$B/x.go" and is the right trade.
+# One path, normalized and made project-relative, or nothing if it lands
+# outside. Same rules as read_paths uses internally; both callers need them,
+# and a containment guard that exists in two versions is a guard that will
+# drift.
+rel_path() {
+  awk -v proj="$PROJ" -v p="$1" '
+    BEGIN {
+      if (p == "") exit
+      if (substr(p, 1, 1) != "/") p = proj "/" p
+      n = split(p, parts, "/")
+      k = 0
+      for (i = 1; i <= n; i++) {
+        if (parts[i] == "" || parts[i] == ".") continue
+        if (parts[i] == "..") { if (k > 0) k--; else exit; continue }
+        k++; out[k] = parts[i]
+      }
+      res = ""
+      for (i = 1; i <= k; i++) res = res "/" out[i]
+      if (index(res, proj "/") != 1) exit
+      print substr(res, length(proj) + 2)
+    }
+  ' 2>/dev/null
+}
+
 read_paths() {
   awk -v proj="$PROJ" '
     function is_reader(w) {
@@ -749,10 +773,11 @@ do_event() {
   # machine-specific prefix reaches the graph or the vault.
   case "$KIND" in
     read|write)
-      case "$TARGET" in
-        "$PROJ"/*) TARGET="${TARGET#"$PROJ"/}" ;;
-        /*) exit 0 ;;  # outside the project: not ours to record
-      esac
+      # A relative path used to fall through both arms of the old case and
+      # reach the ledger verbatim, so ../../etc/passwd walked straight past
+      # the guard that rejects the absolute form.
+      TARGET="$(rel_path "$TARGET")"
+      [ -n "$TARGET" ] || exit 0
       ;;
   esac
 

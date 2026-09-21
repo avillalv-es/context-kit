@@ -125,6 +125,26 @@ if [ -s "$TMP/data/events/$(printf '%s' "$TMP/proj" | cksum | cut -d' ' -f1).tsv
 else
   fail "hook event recorded nothing"
 fi
+# The same escape wearing a relative hat. The old guard had one arm for
+# "under the project" and one for "absolute and elsewhere", and a relative
+# path matched neither, so it was written to the ledger verbatim - past the
+# check immediately below, which only ever saw the absolute form.
+printf '%s' '{"session_id":"s1","hook_event_name":"PostToolUse","tool_name":"Read","tool_input":{"file_path":"../../etc/passwd"}}' \
+  | CLAUDE_PLUGIN_ROOT="$PWD" CLAUDE_PLUGIN_DATA="$TMP/data" CLAUDE_PROJECT_DIR="$TMP/proj" sh hooks/context-kit.sh event >/dev/null 2>&1
+if grep -q 'passwd' "$TMP/data/events/"*.tsv 2>/dev/null; then
+  fail "a relative file_path escaped the project and was recorded"
+else
+  pass "a relative file_path climbing out of the project is rejected"
+fi
+# An in-project relative path must still be recorded, unchanged.
+printf '%s' '{"session_id":"s1","hook_event_name":"PostToolUse","tool_name":"Read","tool_input":{"file_path":"a.py"}}' \
+  | CLAUDE_PLUGIN_ROOT="$PWD" CLAUDE_PLUGIN_DATA="$TMP/data" CLAUDE_PROJECT_DIR="$TMP/proj" sh hooks/context-kit.sh event >/dev/null 2>&1
+if grep -q '	a.py$' "$TMP/data/events/"*.tsv 2>/dev/null; then
+  pass "an in-project relative file_path is recorded as given"
+else
+  fail "an in-project relative file_path was dropped"
+fi
+
 # A read outside the project is not ours to record.
 printf '%s' '{"session_id":"s1","hook_event_name":"PostToolUse","tool_name":"Read","tool_input":{"file_path":"/etc/passwd"}}' \
   | CLAUDE_PLUGIN_ROOT="$PWD" CLAUDE_PLUGIN_DATA="$TMP/data" CLAUDE_PROJECT_DIR="$TMP/proj" sh hooks/context-kit.sh event >/dev/null 2>&1
@@ -369,6 +389,42 @@ for A in session subagent mode signal event; do
   grep -q "'$A'" hooks/context-kit.ps1 2>/dev/null || { fail "ps1 hook does not handle '$A'"; PARITY=1; }
 done
 [ "$PARITY" -eq 0 ] && pass "sh and ps1 hooks handle the same actions"
+
+# Handling the same action names is not the same as agreeing on an answer.
+# Both twins parse commands and paths independently, so they can and did
+# drift: before this suite grew, sh switched the level on a multi-line
+# "/lean off" and ps1 did not. Run the real comparison wherever a PowerShell
+# exists, and say plainly when there is none rather than implying coverage.
+PWSH="${CONTEXT_KIT_PWSH:-$(command -v pwsh 2>/dev/null)}"
+if [ -n "$PWSH" ] && [ -x "$PWSH" ]; then
+  PP="$TMP/parity"; mkdir -p "$PP/sub"
+  : > "$PP/a.md"; : > "$PP/b.md"; : > "$PP/sub/c.md"
+  DRIFT=0
+  twin() { # $1 action, $2 payload, $3 which ledger column to compare
+    rm -rf "$TMP/p_sh" "$TMP/p_ps"
+    printf '%s' "$2" | CLAUDE_PLUGIN_DATA="$TMP/p_sh" CLAUDE_PROJECT_DIR="$PP" \
+      sh hooks/context-kit.sh "$1" >/dev/null 2>&1
+    printf '%s' "$2" | CLAUDE_PLUGIN_DATA="$TMP/p_ps" CLAUDE_PROJECT_DIR="$PP" \
+      "$PWSH" -NoLogo -NoProfile -File hooks/context-kit.ps1 "$1" >/dev/null 2>&1
+    A=$(cat "$TMP/p_sh/$3"/*.tsv 2>/dev/null | cut -f"$4" | sort | tr '\n' ' ')
+    B=$(cat "$TMP/p_ps/$3"/*.tsv 2>/dev/null | cut -f"$4" | sort | tr '\n' ' ')
+    [ "$A" = "$B" ] || { fail "sh and ps1 disagree on $5: sh=[$A] ps=[$B]"; DRIFT=1; }
+  }
+  twin event '{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"cat a.md b.md"}}' events 4 "a multi-file read"
+  twin event '{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"grep -n a.md b.md"}}' events 4 "a pattern that names a file"
+  twin event '{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"cat a.md > b.md"}}' events 4 "a redirect target"
+  twin event '{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"cd sub && cat c.md"}}' events 4 "a cd that moves the base"
+  twin event '{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"cat ../../etc/passwd"}}' events 4 "a path escaping the project"
+  twin event '{"session_id":"s1","tool_name":"Read","tool_input":{"file_path":"../../etc/passwd"}}' events 4 "a relative escaping file_path"
+  twin signal '{"tool_input":{"command":"cd /x && npm run build"}}' signals 1 "a cd-prefixed signature"
+  twin signal '{"tool_input":{"command":"set -e"}}' signals 1 "a scaffolding-only signature"
+  MA=$(printf '%s' '{"prompt":"/lean off\nplus more"}' | CLAUDE_PROJECT_DIR="$PP" sh hooks/context-kit.sh mode 2>/dev/null)
+  MB=$(printf '%s' '{"prompt":"/lean off\nplus more"}' | CLAUDE_PROJECT_DIR="$PP" "$PWSH" -NoLogo -NoProfile -File hooks/context-kit.ps1 mode 2>/dev/null)
+  [ "$MA" = "$MB" ] || { fail "sh and ps1 disagree on a multi-line /lean prompt"; DRIFT=1; }
+  [ "$DRIFT" -eq 0 ] && pass "sh and ps1 agree on signatures, read paths and mode"
+else
+  pass "sh/ps1 behaviour comparison skipped (no pwsh; set CONTEXT_KIT_PWSH to run it)"
+fi
 
 # --- 10. the graph builder emits parseable JSON ----------------------------
 GP="$TMP/gproj"
