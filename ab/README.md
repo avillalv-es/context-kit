@@ -29,7 +29,14 @@ sh measure-static.sh     # layer 1: exact context cost per task, per arm, per si
 sh verify-parity.sh      # asserts both arms carry identical facts
 sh factgap.sh 3          # how many facts arm A never shows the agent
 sh grade.sh              # correctness of each completed run
+python3 collect-tokens.py  # layer 2: per-run token telemetry from the transcripts
+python3 report.py          # rebuild the SVG charts
+sh render.sh               # screenshot them to PNG
 ```
+
+`collect-tokens.py` reads the subagent transcripts rather than context-kit's
+own activity ledger. The ledger only records the file-reading tool, and these
+agents read through `cat` and `grep` far more often, so it undercounts badly.
 
 `results/` holds the raw TSVs every chart is drawn from.
 

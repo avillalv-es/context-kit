@@ -400,6 +400,18 @@ def summary_html(charts, static, gap, grades, emp, runs):
         o.append(f'<div class="k"><b>Facts withheld</b><div class="big">{mg:.0f}%</div>'
                  f'<p style="margin:4px 0 0;font-size:13px">never shown to the agent &#8212; '
                  f'the saving and the risk are one number</p></div>')
+    if emp:
+        def _pk(a):
+            v = sorted(float(r["peak_ctx"]) for r in emp if r["arm"] == a)
+            n = len(v)
+            return (v[n // 2] if n % 2 else (v[n // 2 - 1] + v[n // 2]) / 2) if v else 0
+        _a, _b = _pk("a"), _pk("b")
+        if _a and _b:
+            o.append(f'<div class="k"><b>Peak context, measured</b>'
+                     f'<div class="big">&#8722;{(1 - _a / _b) * 100:.0f}%</div>'
+                     f'<p style="margin:4px 0 0;font-size:13px">{fmt(_b)} &#8594; {fmt(_a)} median '
+                     f'across {len(emp)} real runs &#8212; most of both is fixed overhead</p></div>')
+
     if ntot.get("a") and ntot.get("b"):
         o.append(f'<div class="k"><b>Correctness</b><div class="big">{npass["a"]}/{ntot["a"]} '
                  f'vs {npass["b"]}/{ntot["b"]}</div>'
