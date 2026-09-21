@@ -1,0 +1,101 @@
+src/db/**|2
+# Database and migrations
+
+`client.ts` hands back an in-memory `Db` whose `query` resolves `[]`, and `Db` exposes only `query(sql, params)`:
+no driver, no pool, no migration runner in the tree yet. The runtime rules below are the contract to build to,
+and where checked-in code already breaks one it says so. Widen `Db` before faking a transaction with `BEGIN`.
+
+## Migrations
+
+- Migrations are numbered and applied in order. Never edit a migration that has been applied - add a new one.
+- Three digits, snake_case after the number (`003_readings_partitions.sql`). The number is claimed when the PR
+  opens, not when it merges - two branches taking `003` is cheap to fix in review and expensive after deploy.
+- One concern per file. `002_tariffs.sql` only creates the table; its backfill shipped separately so it could be
+  re-run after the first pass loaded `valid_to` as `'infinity'` instead of NULL.
+- No `DROP COLUMN` in the same release as the code that stops writing it. Deploy the code, wait a full billing
+  cycle, then drop - rollbacks happen and a dropped column does not come back.
+- Migrations get one connection outside the pool with no `statement_timeout`; do not route them via `getDb()`.
+
+## Backfills
+
+- A backfill is not a migration. Anything rewriting more than ~100k rows holds locks past the deploy health
+  check and the deploy gets rolled back mid-write.
+- DDL in the migration, data move in a resumable worker under `src/workers` that commits in batches. Batch size
+  follows `INGEST_BATCH_SIZE` (default 500) so there is one knob to turn down when the database is unhappy.
+- Every backfill is idempotent on `(site_id, bucket)`. The DCC provider replays feeds without warning; the
+  second run must be a no-op, not a duplicate-key error.
+- Keep progress in the data, not in worker memory - a rollup backfill restarted after an OOM re-processed 11 sites.
+
+## Indexes
+
+- Index changes ship as their own migration, with `CREATE INDEX CONCURRENTLY` so the table is not locked in production.
+- `CREATE INDEX CONCURRENTLY` cannot run inside a transaction block and the runner wraps each file in one, so
+  an index migration opts out on its first line:
+
+```sql
+-- meterflow:no-transaction
+CREATE INDEX CONCURRENTLY IF NOT EXISTS readings_bucket_idx ON readings (bucket);
+```
+
+- A failed concurrent build leaves an `INVALID` index: it costs writes and is never used by reads. Check
+  `pg_index.indisvalid` afterwards, then drop and rebuild - never retry on top of it.
+- `readings` is already covered by its primary key `(site_id, bucket)`; a bare `site_id` index is a PK prefix
+  that buys nothing but write cost.
+- `tariffs` has nothing but its `BIGSERIAL` PK today and wants `(site_id, valid_from)` - ADR 002 applies
+  precedence in memory, so the read is every candidate row for the site rather than a point lookup.
+
+## Upserts on (site_id, bucket)
+
+- Ingest is at-least-once, so writes to `readings` are upserts on the primary key, never a bare INSERT:
+
+```sql
+INSERT INTO readings (site_id, bucket, wh)
+VALUES ($1, $2, $3)
+ON CONFLICT (site_id, bucket) DO UPDATE
+  SET wh = EXCLUDED.wh
+WHERE readings.wh <> EXCLUDED.wh;
+```
+
+- `insertReadings` has not caught up: a bare three-placeholder INSERT with every row flattened into the
+  parameter list, so a replay duplicates and any batch past one row is malformed. Fix it first.
+- The trailing `WHERE` is not decoration. Without it a replay rewrites every row it touches, bloating the month
+  partition and waking autovacuum in the middle of the billing window.
+- `DO UPDATE`, not `DO NOTHING`: providers send corrections for settled half-hours and the later value is the
+  correct one. This is the one table where last-write-wins is the rule rather than a smell.
+- `wh` is Wh and only Wh (ADR 001). A converted value never goes into this column; `toKwh` runs at the API edge.
+- Name the columns; no `SELECT *`. `findSite` still does and casts the row straight to `Site`, so a new column
+  in `sites` changes what the domain layer is handed with nothing to catch it.
+
+## Transactions
+
+- One transaction per ingest batch - not per reading, not per file. A 500-row batch that half-commits is
+  recoverable by replay; a 50k-row transaction is a lock-held-too-long incident.
+- Reads run outside a transaction. Wrapping rollup reads in one bought nothing and pinned the snapshot for the
+  whole job, keeping vacuum off the previous day's dead tuples.
+- Never hold a transaction open across an HTTP call to a provider. This has bitten us twice.
+- Billing writes and the rollup they derive from commit together, or billing charges for a rollup that rolled back.
+
+## Partitioning
+
+- `readings` is still one flat table in `001_init.sql`; it is to be RANGE-partitioned on `bucket`, one partition
+  per calendar month named `readings_YYYY_MM`. At ~17.5k rows per site per year, vacuum over one flat table
+  outgrew the gap between `ROLLUP_INTERVAL_MS` runs.
+- Partitions are created three months ahead by a scheduled job, never on demand at write time. An insert with
+  no matching partition raises; one such gap took ingest down for four hours before anyone noticed.
+- Always bound `bucket` so the planner can prune - that is why `readingsForSite` takes `fromIso` and `toIso`.
+- Detach, then drop. `DETACH` takes a brief lock; `DROP` on an attached partition takes one on the parent.
+
+## Vacuum
+
+- Create each partition with `autovacuum_vacuum_scale_factor = 0.01`, `autovacuum_analyze_scale_factor = 0.02`
+  and `fillfactor = 90` in the same migration; `sites` and `tariffs` keep the defaults. At the default 20% scale
+  factor vacuum first touches the current month long after it hurts.
+- Never `VACUUM FULL` a live partition: ACCESS EXCLUSIVE, and ingest backs up behind it.
+
+## Pooling and query timeouts
+
+- `getDb()` memoises one `Db` per process. Import it; a second client doubles the connection count invisibly
+  once a real driver is behind it. Pool size stays small (10 per process) - ingest scales by adding workers.
+- `statement_timeout` is set at checkout: 5s for API queries, 60s for workers. A query needing 60s is a missing
+  `bucket` bound, not a slow DB.
+- Timeouts surface as retryable errors; ingest retries the whole batch, which the upsert above makes safe.

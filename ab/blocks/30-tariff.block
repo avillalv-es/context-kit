@@ -1,0 +1,7 @@
+src/domain/tariff.ts|1
+# Tariffs
+- Tariff precedence is `capacity` > `timeOfUse` > `fixed`. Where two of the same kind overlap, the later `validFrom` wins. See docs/adr/002-tariffs.md.
+- `activeTariffs` returns candidates in **no particular order**. Callers must apply the precedence themselves. Taking `active[0]` is wrong and silently undercharges.
+- A site can legitimately have several tariffs active on the same day during a supplier switch. This is not a data error and must not be rejected.
+- `rate` is pence per kWh for `fixed` and `timeOfUse`, and pence per kVA per day for `capacity`. The units differ per kind; there is no single formula.
+- `validTo` is exclusive. A tariff with `validTo` equal to the instant queried is not active.

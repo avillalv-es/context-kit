@@ -1,0 +1,86 @@
+*|3
+# Code style and review
+
+Nothing below is enforced by tooling: `package.json` has `test` and `typecheck`,
+one devDependency, no eslint, no prettier, no CI. Every rule is held up by a human.
+
+## Naming
+
+- TypeScript is `camelCase`, SQL is `snake_case`, and `src/db` is the seam they
+  should meet at. Nothing maps `site_id` -> `siteId` today, so raw rows reach
+  `domain` behind a cast. Fix that in `src/db`, never by renaming in `domain`.
+- A variable holding energy carries its unit: `wh` is Wh, `kwh` is kWh (ADR 001
+  makes Wh canonical). A bare `value` passes only beside a `unit` field, as on
+  `RawReading`; the bare `total` in `rollup.ts` and `readings.ts` is not a model.
+- Timestamp parameters end in `Iso` (`onIso`, `fromIso`); interface fields predate
+  the rule (`takenAt`, `bucket`, `validFrom`); new ones take it. All are UTC ISO-8601.
+- `Date` objects stay inside `src/lib/dates.ts` - nothing even calls `toUtcIso`.
+  `Date.parse` on an ISO string in `domain/tariff.ts` is the one use outside it.
+- Error classes are the bare noun (`NotFound`, `Invalid`); only `DomainError` keeps
+  the suffix. A new one picks its `code` and status in the same PR; the base is 422.
+
+## Imports
+
+`module`/`moduleResolution` are `NodeNext` and the package is `"type": "module"`,
+so a relative import carries `.js` though the file on disk is `.ts`:
+`import { toKwh } from "../lib/units.js"`. Without the extension `typecheck` fails;
+with no build step it is the only thing catching a bad specifier before boot.
+
+- Order in practice: a whole-module `import type` goes last; the rest is grouped
+  loosely by layer, not sorted. Mixed value/type from one module is inline:
+  `{ sumWh, type Reading }`, `{ requireApiKey, problem, type Req, type Res }`.
+- Do not reorder imports in a PR that is not about imports. With no sorter the
+  diff is pure noise and it buries the one line that mattered.
+- `tsconfig.json` declares `baseUrl` and `paths: { "@lib/*": ["src/lib/*"] }`. No
+  file uses either, nothing rewrites the alias at runtime, and TS 6 deprecates
+  `baseUrl`. Delete them rather than adopt them.
+
+## Strictness
+
+| Setting | State | Why |
+|---|---|---|
+| `strict` | on | `strictNullChecks` is the point: a missing tariff or reading must be a type error, not a `NaN` in pence |
+| `noUncheckedIndexedAccess` | off | Wanted, not yet affordable. Its absence is why `active[0]` in `chargeFor` typechecks - see ADR 002 |
+
+`strict` is the only strictness flag; the rest is `target` and the `NodeNext` pair.
+`as never` and `as unknown as X` cross `db` -> `domain` today - `api/billing.ts`,
+`api/readings.ts`, `workers/rollup.ts`, `db/sitesRepo.ts`, all at the call site.
+Each is a review flag: the fix is one typed row mapper in `src/db`, not a cast.
+
+## File size
+
+Soft cap 120 lines, hard 200; the largest file in `src/` is 31 today. Nothing is
+near the cap, so a file that reaches it has taken on work that belongs elsewhere.
+
+## Comments
+
+- Comment the rule a signature cannot express, nothing else. The model is
+  `Tariff.rate`: "Pence per kWh, except capacity which is pence per kVA per day."
+- JSDoc an export only when it carries an invariant (`normalizeUnit`, `toKwh`, the
+  `Reading` interface). No `@param`/`@returns`, no commented-out code, no bare TODO.
+
+## Commits and PRs
+
+- `type(scope): subject`, imperative, lowercase; scope is the directory, e.g.
+  `fix(domain): apply tariff precedence in chargeFor`.
+- A commit that changes money names the ADR in its body. `git log
+  src/domain/billing.ts` is the first thing read during a billing incident.
+- Under 300 changed lines. Billing arithmetic ships alone, never bundled with a
+  rename or an import cleanup. Migrations are additive and go in their own PR.
+
+## Reviewing a change to billing arithmetic
+
+Two approvals, one from someone who has run a settlement. Before approving:
+
+1. Units. For every `number` on the path to `pence`, is it Wh or kWh? ADR 001:
+   Wh is canonical, `toKwh` is a presentation-boundary call.
+2. Precedence. ADR 002: `capacity` > `timeOfUse` > `fixed`, later `validFrom`
+   breaks a tie. `activeTariffs` is unordered; `chargeFor` still takes `active[0]`.
+3. Kind. `chargeFor` never reads `Tariff.kind`. A `capacity` rate is pence per kVA
+   per day; multiplying it by kWh is wrong by about the site's load factor.
+4. Rounding. One `Math.round` to whole pence at the end, never on a partial sum.
+5. Test. Assert an exact pence figure computed by hand, not pasted from output.
+6. Precision. `readings.wh` is `BIGINT`, TypeScript carries it as `number`; a sum
+   that could pass 2^53 Wh has to be called out.
+
+"Looks right" is not an approval on this path. Reproduce the number.

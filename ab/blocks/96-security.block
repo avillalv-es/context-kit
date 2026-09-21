@@ -1,0 +1,90 @@
+*|3
+# Security and data handling
+
+Consumption data is personal data under UK GDPR and this service gets audited on it.
+Write code here as if a regulator will read the diff, because twice now one has.
+
+## API keys
+
+- `requireApiKey` only checks that `x-api-key` is *present*; the gateway verifies it and this
+  service trusts the mesh, so **never expose a meterflow port outside it**. Staging was
+  internet-reachable for nine hours after a security-group edit, every route wide open.
+- One key per consuming system, never per person, never shared across environments. A key
+  that has been on a laptop is a revoked key, and revoking is not the same as rotating.
+- Rotation is 90 days with a 14-day overlap: issue, dual-accept, revoke. Do not collapse the
+  overlap - the DCC feed retries for 24h, then discards that half-hourly window for good.
+- No key material belongs in `Config`. `DATABASE_URL` is the only secret `loadConfig` reads
+  and the only one that should ever be added to it. Suspected compromise goes to IT Security.
+
+## MPAN is personal data
+
+- The MPAN *is* the `siteId` throughout, and there is no pseudonymous internal id, so every
+  table keyed on `sites(site_id)` - `readings`, `tariffs` - is personal data as well.
+- An MPAN plus half-hourly readings is an occupancy record; that pairing sets the clock below.
+- Do not put an MPAN in a `DomainError` message. `problem()` copies the message into the
+  response `title`, so it leaves the building. `findSite` does exactly that with
+  `NotFound(site ${siteId})` - that is a known finding, not a pattern to copy.
+- Never truncate an MPAN into a short id or cache key - the trailing digits are the
+  distributor and meter portion and collide across regions.
+- GET handlers read `siteId` from the request body, not the query string, on purpose - `Req`
+  has no `query` field at all. It keeps MPANs out of request lines, proxy logs and history.
+- `describeSite` folds the MPAN into its `label`; treat that string as an MPAN, not a name.
+
+## Logs and analytics
+
+- `log()` redacts by exact top-level key name - `mpan`, `meterSerial`, `customerRef` - and
+  does not recurse. It is a backstop, not a boundary: `{ site: { mpan } }` writes the MPAN in
+  full, and so does `{ siteId }`, the name the MPAN goes by here and the one `REDACT` omits.
+- Widening `REDACT` is not the fix: it only narrows what a line may say, and the useful lines
+  key on `siteId`. Do not pass the value. `rollupSite` logs `{ siteId, wh }` for one site
+  today - that is the open finding, and it breaks the next rule too.
+- Log the event and the shape, never the subject: counts, durations, row totals, error
+  codes. Energy is loggable only above site level; one site's `wh` for one day is a household.
+- Never log a request or response body: a billing body carries supplier `rate` values in its
+  `tariffs` array as well as the MPAN, and we hold no agreement to keep supplier rates in the
+  log store. Responses are no safer - `getSummary` echoes `siteId` straight back.
+- Analytics gets rollups keyed by an export-time surrogate, never by `siteId`.
+- Scar tissue: MPANs reached the log index through an unhandled error's `String(e)`, which
+  bypasses `REDACT` entirely; retention there was 400 days, so it was a reportable breach.
+  `normalizeUnit` still throws a plain `Error` holding its input - assume any message string
+  built in the domain reaches the log store verbatim.
+
+## Retention
+
+| Data | Kept | Then |
+| --- | --- | --- |
+| Raw half-hourly readings | 24 months | deleted |
+| Rollups and billing charges | 7 years | kept (tax) |
+| Application logs | 30 days | deleted |
+| Ingest dead-letter payloads | 7 days | deleted |
+
+- 24 months is the settlement dispute window plus a quarter; longer needs a lawful basis.
+- Rollups past 24 months must not be reversible to a half-hour; a finer grain needs an ADR.
+- `readings` records only `bucket`, never an arrival time, so the quarterly delete keys on
+  reading time. A late backfill is part-expired the day it lands; note that in the runbook.
+- There is no purge job. Deletion is a manual quarterly runbook and our largest standing
+  audit finding - never assume expired data is gone, and re-run it after any restore.
+
+## Subject access and erasure
+
+- SARs arrive through Legal on a 30-day clock. Engineering extracts, it does not set scope.
+- Export is every `readings` row, the `sites` row, that site's `tariffs` rows and derived
+  charges, converted with `toKwh` (ADR 001). A subject gets kWh, never raw `wh`.
+- Erasure is usually refused in part: settlement data has a statutory basis. Restrict.
+- The MPAN goes in the SAR register, not in a ticket title, branch name or code comment.
+
+## DCC and third parties
+
+- The DCC is a source, not a sink. We send nothing back but feed acknowledgements; any new
+  outbound flow needs a DPIA before code is written.
+- Never forward a raw provider payload into a ticket or vendor thread - reproduce with a
+  synthetic 13-digit MPAN that passes `validateSiteId` and maps to no real distributor.
+- Log and metrics vendors are sub-processors: register them before issuing a credential.
+
+## Encryption at rest
+
+- Volumes, snapshots and backups are encrypted at the platform layer with customer-managed
+  keys. Nothing in this repo implements it and nothing should.
+- `DATABASE_URL` must carry `sslmode=verify-full`. `loadConfig` does not check this, which is
+  how a staging URL without it went unnoticed for a month.
+- No meter data in local files: no debugging CSVs, no `.sql` snapshots, no pasting into chat.

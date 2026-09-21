@@ -1,0 +1,9 @@
+src/db/**|1
+# Database
+- Migrations are numbered and applied in order. **Never edit a migration that has been applied** - add a new one. The numbering is the contract.
+- Migration filenames are `NNN_short_name.sql`, zero-padded to three digits. The next number is one above the highest present.
+- Every table access goes through a repo function in `src/db/`. No SQL in `src/api/` or `src/domain/`.
+- Queries are parameterised with `$1`-style placeholders. String interpolation into SQL is never acceptable, including for identifiers.
+- `readings` is keyed `(site_id, bucket)`. A duplicate read for the same bucket is an upsert, never a second row.
+- Index changes ship as their own migration, with `CREATE INDEX CONCURRENTLY` so the table is not locked in production.
+- A migration that adds a NOT NULL column must supply a default or backfill in the same file, or deploy fails on existing rows.

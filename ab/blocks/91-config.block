@@ -1,0 +1,6 @@
+src/lib/config.ts|3
+# Configuration
+- Configuration is read once, through `loadConfig`. Reading `process.env` anywhere else makes behaviour untestable.
+- A missing required variable throws at boot. The service must not start in a half-configured state.
+- Numeric settings are parsed with `Number(...)` and defaulted with `??`, so an empty string is a real value and not silently zero.
+- `DATABASE_URL` is required and has no default, in every environment including local.

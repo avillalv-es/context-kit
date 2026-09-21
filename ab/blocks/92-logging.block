@@ -1,0 +1,6 @@
+src/lib/logger.ts|3
+# Logging
+- Logs are one JSON object per line, written to stdout. Nothing else parses them.
+- The `event` field is a dotted name like `ingest.batch`. It is the primary index in the log store, so it must be stable.
+- Levels are debug, info, warn, error. There is no fatal; a fatal condition throws.
+- The redaction list in `logger.ts` is the single place field-level redaction is enforced. Adding a sensitive field means adding it there.

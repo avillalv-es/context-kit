@@ -1,0 +1,89 @@
+*|3
+# Performance
+
+Figures here came off the load rig (8 vCPU, Postgres 16, 1.2M-row `readings`), not
+laptops. Re-measure before quoting one — the rig is rebuilt every quarter.
+
+## Throughput targets
+
+| Path | Target | Last measured | Page at |
+| --- | --- | --- | --- |
+| `ingestBatch` worker | 12k readings/s | 13.4k/s, 2026-06-11 | < 8k/s for 5 min |
+| `POST /v1/readings` | p99 < 40 ms | p99 31 ms | p99 > 60 ms |
+| `rollupSite` (1 site, 1 month) | < 900 ms | 640 ms | > 2 s |
+| `GET /v1/billing/charge` | p99 < 250 ms | p99 190 ms | p99 > 400 ms |
+
+The 8k/s floor is not ambition: the overnight DCC drop is ~40M readings and has to
+land inside a 90-minute window, and under it the morning rollup bills a partial day.
+
+Distrust the ingest row until `insertReadings` is fixed: one statement, three
+placeholders, and `rows.flatMap(...)` handing it 3N parameters for N rows, with
+`rows.length` returned regardless. A real Postgres rejects that bind above one row; the
+stub does not and no test reaches the repo layer, so nothing goes red. Re-measure.
+
+## Batch sizing
+
+- `INGEST_BATCH_SIZE` defaults to 500 (`src/lib/config.ts`); above ~1000 the round-trip
+  amortisation flattens. 2000 measured 4% better and was reverted — see the next bullet.
+- The ceiling is retry cost, not SQL. The map is `toReading(validateRaw(r))` and both
+  throw on the first bad row, so one malformed reading discards the whole mapped batch
+  (a bad MPAN fails in `validateRaw`, a negative value in `toReading`). At 5000, one bad
+  MPAN in a supplier file cost 40 s of re-work per attempt during the 2025-07 onboarding.
+- **`ingestBatch` truncates, it does not chunk** — `raw.slice(0, cfg.ingestBatchSize)`
+  drops the overflow and returns a count that reads like success. Chunk upstream. This
+  lost ~2h of the 2025-11 backfill; the tell was `ingest.batch` logging 500 every call.
+- Log once per batch: `log()` is a synchronous `process.stdout.write`.
+
+## N+1 patterns that have bitten this repo
+
+- **Rollup over the estate.** `rollupSite` is deliberately one site. Looping it over the
+  site list is the N+1 everyone writes first: 4,200 sites x one `readingsForSite` each
+  ran 11 min, against 19 s for the equivalent grouped query. Group by `site_id` in SQL.
+- **Tariffs per reading.** `getCharge` takes tariffs off the request body and hands them
+  to `chargeFor`, which never queries. It looks untidy; it is deliberate. In v0.2 the
+  lookup sat inside the reading loop and one site-month issued 1,440 queries (48 x 30).
+- `tariffs` has no index on `site_id` (`002_tariffs.sql`). Harmless while tariffs are
+  passed in — the first code that queries it in a loop adds the index in the same PR.
+- `readings` is indexed only by its PK `(site_id, bucket)`, so a predicate on `bucket`
+  alone is a full scan. That is why every read path takes a `siteId`, even internal ones.
+
+## Memory ceilings on rollup
+
+- `readingsForSite` has no `LIMIT` and no cursor, so `rollupSite` holds an entire site
+  window resident before `sumWh` walks it. A site-year is 17,520 rows and fine.
+- A `Reading` plus its driver row measured ~180 B resident, so arithmetic says 2.8M rows;
+  we OOM'd at 1.6M because the driver buffers the whole result first. Budget 1.5M per
+  call, chunked in 35-day windows (35 not 31, so a billing month containing a tariff
+  switch still fits one call).
+- That 512 MB is `--max-old-space-size=512` on the deployed worker, not anything in this
+  repo (`package.json` has `test` and `typecheck` only), so a local run will not OOM.
+- Never lower `ROLLUP_INTERVAL_MS` (default 300000) to catch up after an outage:
+  overlapping rollups double the resident set — that is how we found 1.6M. Nothing in
+  this tree reads it; the scheduler is elsewhere, so editing the default alone does nothing.
+
+## Why `readings.wh` is BIGINT, not NUMERIC
+
+- ADR 001 makes Wh canonical and Wh is a count, so BIGINT is already exact. Over 40M rows
+  (2025-09), `SUM(wh)` ran 1.9 s / 1.4 GB as BIGINT against 6.4 s / 3.9 GB as NUMERIC.
+- BIGINT is fixed-width and pass-by-value; NUMERIC is varlena and every aggregate step
+  allocates. Wrong direction for a table growing 48 rows per site per day.
+- Known ceiling: TS carries `wh: number`, so `sumWh` accumulates in float and exactness
+  stops at 2^53 Wh (~9 PWh, ~30x UK annual demand). Real, not urgent — widening it to
+  `bigint` crosses the driver, the API JSON and every test.
+
+## Profiling procedure
+
+```bash
+node --test                       # green first: perf numbers off a red tree are noise
+# the driver is a throwaway that calls ingestBatch with generated fixtures. Not
+# checked in — its shape changes with whatever you are chasing.
+DATABASE_URL=postgres://localhost/mf_rig \
+  node --cpu-prof --cpu-prof-dir=./prof ./drive-ingest.mjs 200000
+node --heap-prof --max-old-space-size=512 ./drive-ingest.mjs 2000000
+# three runs, take the median: run one is ~20% slow from JIT warmup
+```
+
+- Profile against a real Postgres. `getDb()` memoises a stub that returns `[]` and drops
+  its params (`src/db/client.ts`), so `sumWh` of nothing is 0 and every rollup looks
+  instant. Green `node --test` proves only the domain: nothing under `src/db` is tested.
+- Add a figure here only with its date and row count. Undated numbers get believed.

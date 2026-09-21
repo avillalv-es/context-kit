@@ -1,0 +1,6 @@
+src/lib/errors.ts|2
+# Errors
+- `DomainError` carries a machine-readable `code` and an HTTP `status`. Both are part of the API contract.
+- New error kinds subclass `DomainError` rather than adding branches to `problem()`.
+- `NotFound` is 404, `Invalid` is 400, the `DomainError` default is 422. Do not invent new statuses without a decision recorded in docs/adr/.
+- Error messages are for operators. They must not contain customer identifiers, because they reach logs and problem documents.

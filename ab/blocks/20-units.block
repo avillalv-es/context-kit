@@ -1,0 +1,7 @@
+src/lib/units.ts|2
+# Units
+- `normalizeUnit(value, unit)` is the only converter into storage. Adding a unit means adding it to `TO_WH` and to the `Unit` union, in that order.
+- `toKwh(wh)` is the only converter out. It is a presentation concern and must not be called inside `src/domain/`.
+- Unit strings are validated by `isUnit` before they reach `normalizeUnit`, which throws on an unknown unit rather than defaulting.
+- Wh is stored as `BIGINT`. A float column loses precision at grid scale and we have the incident report to prove it.
+- Negative energy is rejected at validation, not clamped. Export meters are a separate feed and a separate table.

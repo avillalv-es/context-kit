@@ -1,0 +1,99 @@
+src/api/**|2
+# API conventions
+
+Handlers are plain `(req: Req) => Promise<Res>` in a `Record`; there is no HTTP
+framework here. Body limits, CORS and rate limiting live at the ingress proxy.
+
+## Route registration
+
+- One entry per route in `routes.ts`, keyed `"METHOD /v1/path"`. The key is a plain
+  string, so a typo compiles and the route simply never matches — no type error.
+- Nothing outside `/v1`. Unversioned paths were live for three weeks in 2023 and
+  two DCC integrators still retry them; a 404 is cheaper than a second surface.
+- Handlers call `requireApiKey` themselves. There is no chain to hang it on, so
+  forgetting it ships an open endpoint. Copy the shape of an existing handler:
+  `requireApiKey` first inside the `try`, every exit through `problem`.
+
+## Request shape
+
+- `Req` is `{ path, body, headers }` — there is no query field, so every GET handler
+  reads its parameters out of `req.body`. A new one has to do the same.
+- Only `siteId` is validated. `getSummary` and `getCharge` push `from`/`to` through
+  `String(...)` into SQL params, so a missing `from` reaches the database as the
+  literal `"undefined"`. New range or filter params get a validator in
+  `domain/validate.ts`, not a `String()` cast.
+
+## Problem+json
+
+- Nothing but `problem` formats an error; handlers never pick an error status
+  themselves. `DomainError` subclasses carry their own status (see the errors
+  block); a missing `x-api-key` is 401, and anything not a `DomainError` is 500.
+- Never throw a bare `Error` for a client-visible condition: it lands in the 500
+  branch and pages on-call. Add a `DomainError` subclass in `lib/errors.ts`. The one
+  bare `Error` still reachable from a handler is `normalizeUnit`'s unknown-unit throw,
+  and only because `validateRaw` runs `isUnit` first. Keep that ordering.
+- `type` is `about:blank#<code>` and is deliberately not resolvable. Clients match
+  on the fragment, so renaming a `code` is a breaking change — treat it as one.
+- The 500 branch logs `String(e)` and returns a fixed title. Never widen it to carry
+  the exception message: a stack trace with an MPAN reached a partner once, which is
+  also why `logger.ts` redacts `mpan`, `meterSerial` and `customerRef`. That redaction
+  is by field name, so an identifier inside a message string slips through it.
+
+## Auth
+
+- `x-api-key` presence only. The key is not resolved to a tenant, so **any valid key can read any MPAN**. Do not design endpoints assuming isolation exists.
+- Auth runs before validation on purpose: an unauthenticated caller must not be able to probe which MPANs are well-formed.
+
+## Units at the boundary
+
+- Energy in any HTTP response is kWh, converted with `toKwh` at the boundary. Returning a raw `wh` field is a bug.
+- Per ADR 001 the domain and DB are Wh end to end; `toKwh` goes in the handler.
+- Name the unit in the field — `totalKwh`, not `total`. A bare `total` makes the next caller guess, and the storage unit is the wrong guess.
+- `getCharge` is the standing exception, not a pattern to copy: it returns the domain
+  `Charge`, whose `kwh` was already converted inside `chargeFor`. That puts `toKwh` in
+  `src/domain/`, which ADR 001 and the comment on `toKwh` both forbid. Fixing it means
+  building the body in the handler from Wh; no wire bytes change.
+
+## Pagination
+
+- Not implemented: `readingsForSite` has no `LIMIT`. Its three callers — `getSummary`,
+  `getCharge` and the rollup worker — all aggregate, which is the only reason a wide
+  `from`/`to` has not hurt yet.
+- Any endpoint returning rows rather than an aggregate is paginated from day one,
+  cursor-style, never `offset`: ingest writes buckets continuously, so an offset
+  shifts under a reader mid-page. `bucket` is half the readings primary key and
+  sorts, which makes it the cursor to reach for.
+- The agreed envelope, so the second one of these does not invent its own:
+
+```ts
+interface Page<T> { items: T[]; nextCursor: string | null }
+```
+
+## Idempotency keys
+
+- `POST /v1/readings` is **not** idempotent, but it does not double-count either:
+  `readings` is `PRIMARY KEY (site_id, bucket)`, so retrying the same half-hour raises
+  a database error, which is no `DomainError` and lands in the 500 branch. A retried
+  timeout pages on-call instead of duplicating a row; nothing downstream repairs it,
+  and neither the dedupe nor the 500 is a contract to lean on.
+- New write endpoints read `idempotency-key` and reject with `Invalid` when absent.
+
+## Size limits, content negotiation, CORS, rate limiting
+
+- Body cap is 256 KB at the proxy. A batch endpoint needing more chunks the request.
+- `Res` carries no headers, so we cannot send `application/problem+json`; the gateway
+  stamps `application/json` on everything and partners sniff the `type` key instead.
+- JSON only. We do not honour `Accept`; a CSV export is a new endpoint.
+- CORS is off and there is no browser client. Keep it that way — the API key is a
+  server-side credential and CORS would invite it into page JavaScript.
+- Rate limiting is per API key at the proxy, 600 req/min. Ingest bursts on the
+  half-hour boundary, so anything added here has to be burst-tolerant.
+
+## Response-shape compatibility
+
+- Adding a field is fine; removing, renaming, or changing a field's type or unit
+  is not. At least one partner parses our JSON positionally into a spreadsheet.
+- Build bodies literally, field by field. `getCharge` returns a domain `Charge`
+  straight out — a rename in the domain is an API break with no compiler error.
+- Deprecation: announce, serve both shapes for two billing cycles (~2 months), then
+  remove. Monthly billing means a month-end-only partner otherwise gets one warning.
