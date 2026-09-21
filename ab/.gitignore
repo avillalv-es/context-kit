@@ -2,3 +2,5 @@
 # from blocks/ + the scripts, so it is not committed.
 build/
 runs/
+__pycache__/
+*.pyc
