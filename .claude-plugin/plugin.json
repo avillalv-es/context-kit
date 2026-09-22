@@ -14,5 +14,6 @@
     "efficiency",
     "yagni",
     "skill-capture"
-  ]
+  ],
+  "hooks": "./hooks/hooks.json"
 }
