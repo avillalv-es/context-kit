@@ -265,7 +265,6 @@ pending_repeats() {
 # --- session --------------------------------------------------------------
 do_session() {
   LEVEL="$(resolve_level)"
-  [ "$LEVEL" = "off" ] && exit 0
   OUT=""
 
   # Bootstrap: offer once per project, then never nag. Repeating it every
@@ -291,6 +290,15 @@ $NOTE"
     else
       OUT="$NOTE"
     fi
+  fi
+
+  # "off" still gets the two notices above - only the ruleset itself is an
+  # opt-in. (Previously this whole function returned before either notice
+  # was computed; README.md's "off leaves bootstrap and repeat detection in
+  # place" was never actually true until this line moved down here.)
+  if [ "$LEVEL" = "off" ]; then
+    printf '%s\n' "$OUT" | emit SessionStart
+    return
   fi
 
   # Bootstrap (context-cleanup Mode 0/A) stamps this same ruleset into

@@ -120,6 +120,22 @@ level (`full` if none is set). Append the result to `CLAUDE.md` under a
 `## Lean execution` heading — demote the source's own `# Lean execution` line
 to `##` so it nests correctly, otherwise verbatim. Do not reword it.
 
+Then append one more line after it, as part of the same stamped block (this
+is what makes the ruleset reach subagents too — `SubagentStart` is the only
+other place it was ever guaranteed to appear, and a subagent never reads
+`CLAUDE.md` on its own):
+
+```
+When spawning a subagent (Task/Agent tool), include this section's content in its prompt.
+```
+
+This costs a duplicate ~30 lines per subagent spawned on a machine where
+`SubagentStart` also fires normally — there's no reliable way for the
+orchestrating session to detect hook-liveness and skip one or the other, so
+this is accepted rather than solved. Far smaller than the session-level
+duplication risk above: it scales with subagents spawned, not with every
+session.
+
 ### A5 — Report
 
 - What you created, as a file list.

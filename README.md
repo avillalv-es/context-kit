@@ -155,30 +155,25 @@ to actually get these hooks running is to have whoever administers your
 org's managed settings allowlist them.
 
 Skills and commands (`/context-init`, `/lean`, etc.) are a different
-mechanism and are unaffected — they still work normally. What you lose is
-the automatic parts: the bootstrap offer, the ruleset injection, and repeat
-detection. Two of those three have a manual equivalent:
+mechanism from hooks and are unaffected by this — they still run normally.
+Nothing in the plugin gets removed or disabled to work around a blocked
+hook; every fallback below is additive, and the hook it stands in for keeps
+working exactly as designed the moment it's allowed to run.
 
-- **Bootstrap** — run `/context-init bootstrap` yourself once per project.
-- **The ruleset in your main session** — covered by bootstrap already:
-  Mode 0/A now stamps the ruleset into `CLAUDE.md` under a `## Lean
-  execution` heading (see `references/mode-a-initialize.md`, step A4b),
-  which loads every session regardless of hooks. `do_session` /
-  `Invoke-Session` check for that same heading and skip re-injecting the
-  ruleset once it's there, so this costs nothing extra where hooks work
-  normally.
-- **The ruleset in subagents** — no equivalent. Subagents don't inherit
-  `CLAUDE.md` (that's the reason `SubagentStart` used a hook in the first
-  place), and without hook execution there's no automatic way to reach
-  them. The only workaround is pasting the ruleset text into an individual
-  Agent-tool prompt by hand, which isn't automatic and isn't pretended to
-  be here.
+| What the hook did | Fallback | How complete |
+|---|---|---|
+| `SessionStart`: offer to bootstrap a new project | Run `/context-init bootstrap` yourself | Full — already a documented manual path, hook or not |
+| `SessionStart` + `SubagentStart`: inject the ruleset | `context-cleanup` Mode 0/A stamps it into `CLAUDE.md` under `## Lean execution` (`references/mode-a-initialize.md`, step A4b) | Full for your main session — `CLAUDE.md` loads every session regardless of hooks, and `do_session`/`Invoke-Session` skip re-injecting it once that heading exists, so this costs nothing extra where hooks work normally |
+| `SubagentStart`: reach spawned subagents specifically | The same A4b stamp ends with an instruction telling the orchestrating session to paste that section into every subagent prompt it writes | Real, but compliance-based, not enforced — it works because Claude reads and follows it, not because anything guarantees it the way a hook does. Also: on a machine where `SubagentStart` *does* fire, a subagent gets the ruleset twice (hook + pasted prompt text) — there's no reliable way to detect hook-liveness and skip one, so this is accepted rather than solved |
+| `UserPromptSubmit`: persist a `/lean <level>` change | `/lean` now reads and writes the level file itself (`commands/lean.md`) instead of assuming the hook already did it, and re-stamps `CLAUDE.md` to match | Full for the documented `/lean lite\|full\|ultra\|off` command. Not covered: typing a bare phrase like "stop lean" with no `/lean` prefix — that whole-message detection has no equivalent, but the formal command reaches the same end state |
+| `PostToolUse`(Bash): count repeated commands, nudge `skill-capture` at 3+ | `skill-capture`'s SKILL.md now says to notice the same pattern in-context when no hook nudge is possible | Partial, by choice — session-scoped and best-effort, not a persistent cross-session count. The actual capture step is unaffected either way; only the automatic "you should look at this" prompt is weaker |
+| `SubagentStart`(async) + `PostToolUse`(file/task/skill tools): activity ledger behind `/context-graph`'s OBSERVED layer | None | No equivalent, by choice. The only way to replicate it is a standing instruction to hand-log a ledger row after every relevant tool call, forever — real cost for a purely optional visualization that already degrades gracefully (`/context-graph` explicitly avoids reading an empty ledger as "never invoked" rather than showing wrong data) |
 
-If you land here after a fresh debugging session of your own: this exact
-symptom was chased as a plugin bug across four earlier PRs (manifest `hooks`
-key on/off, version bumps) before anyone thought to check `/hooks`. Those
-PRs' changes are still correct and worth keeping — they just weren't the
-cause of this failure mode.
+If you land here after a fresh debugging session of your own: the ruleset
+not firing was chased as a plugin bug across four earlier PRs (manifest
+`hooks` key on/off, version bumps) before anyone thought to check `/hooks`.
+Those PRs' changes are still correct and worth keeping — they just weren't
+the cause of this failure mode.
 
 ---
 
