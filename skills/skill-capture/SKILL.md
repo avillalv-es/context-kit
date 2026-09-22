@@ -125,3 +125,15 @@ crossed the threshold. That is a signal, not an instruction. A command running
 three times may be a procedure worth capturing, or it may be `pytest` running
 three times because three tests failed. Apply step 2 to each one, capture the
 ones that pass, and say nothing about the ones that do not.
+
+## When the hook cannot run
+
+Some environments block plugin hooks outright (`/hooks` reports "Hooks
+Restricted by Policy") — see README.md's "Hooks silently not firing." No
+nudge will ever appear, and no ledger is being written, so there is nothing
+to catch up on retroactively. The fallback is to notice in-context: if you
+have run the same shape of command three or more times *within this
+session*, treat that the same as a hook nudge and apply step 2. This is
+strictly weaker than the real ledger — it is session-scoped, resets on
+compaction, and depends on you noticing rather than a persistent count — but
+it costs nothing extra to keep in mind and catches the common case.

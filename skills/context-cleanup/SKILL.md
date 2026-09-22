@@ -72,7 +72,8 @@ a topic file named for what someone would search for.
 
 If `CLAUDE.md` does not exist, create it with a title line and the stub from
 A4. If it exists, **append** the stub — never overwrite, never reorder, never
-reword what is already there.
+reword what is already there. Then do A4b (append the ruleset stub), the same
+in both modes.
 
 ### 0.3 — Report, in one line
 
