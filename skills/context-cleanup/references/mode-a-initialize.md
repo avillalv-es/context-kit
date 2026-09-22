@@ -101,6 +101,25 @@ let me decide.
 To reorganize any of it, run `/context-init`.
 ```
 
+### A4b — Append the ruleset stub
+
+`CLAUDE.md` loads every session regardless of whether hooks run, which makes
+it what keeps the lean-execution ruleset applying on a machine where a
+managed Claude Code policy blocks plugin hooks outright (`/hooks` reports
+"Hooks Restricted by Policy"). It costs nothing extra where hooks work
+normally: `do_session`/`Invoke-Session` checks for this same marker and skips
+re-injecting the ruleset once `CLAUDE.md` already carries it, so the two
+never double up.
+
+If `CLAUDE.md` already has a `## Lean execution` heading, skip this step.
+
+Otherwise, read `${CLAUDE_PLUGIN_ROOT}/hooks/rules.md`. Strip the leading
+HTML comment block. Keep every untagged line; for a line tagged
+`[lite]`/`[full]`/`[ultra]`, keep it only if its tag matches the current lean
+level (`full` if none is set). Append the result to `CLAUDE.md` under a
+`## Lean execution` heading — demote the source's own `# Lean execution` line
+to `##` so it nests correctly, otherwise verbatim. Do not reword it.
+
 ### A5 — Report
 
 - What you created, as a file list.

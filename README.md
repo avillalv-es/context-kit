@@ -135,6 +135,51 @@ with
 Both scripts are tested and behave identically. Only one is registered by
 default so that the other does not fail on every session of the wrong platform.
 
+### Hooks silently not firing
+
+Symptoms: no ruleset shows up in any session or subagent, no load error
+anywhere, `~/.claude/context-kit/` never gets created — and it persists
+across a full restart of the app, not just a new chat.
+
+Run `/hooks`. If it reports something like *"Hooks Restricted by Policy —
+Only hooks from managed settings can run. User-defined hooks from
+`~/.claude/settings.json`, `.claude/settings.json`, and
+`.claude/settings.local.json` are blocked,"* this is not a bug in this
+plugin: your organization has a managed Claude Code settings tier configured
+that restricts hook execution to what it centrally allowlists, and a
+plugin-installed hook (registered through user-scope settings, whichever
+project you installed it into) falls under exactly what that message names
+as blocked. No change here can override it — that tier is deliberately
+outside what user- or project-level configuration can touch. The only way
+to actually get these hooks running is to have whoever administers your
+org's managed settings allowlist them.
+
+Skills and commands (`/context-init`, `/lean`, etc.) are a different
+mechanism and are unaffected — they still work normally. What you lose is
+the automatic parts: the bootstrap offer, the ruleset injection, and repeat
+detection. Two of those three have a manual equivalent:
+
+- **Bootstrap** — run `/context-init bootstrap` yourself once per project.
+- **The ruleset in your main session** — covered by bootstrap already:
+  Mode 0/A now stamps the ruleset into `CLAUDE.md` under a `## Lean
+  execution` heading (see `references/mode-a-initialize.md`, step A4b),
+  which loads every session regardless of hooks. `do_session` /
+  `Invoke-Session` check for that same heading and skip re-injecting the
+  ruleset once it's there, so this costs nothing extra where hooks work
+  normally.
+- **The ruleset in subagents** — no equivalent. Subagents don't inherit
+  `CLAUDE.md` (that's the reason `SubagentStart` used a hook in the first
+  place), and without hook execution there's no automatic way to reach
+  them. The only workaround is pasting the ruleset text into an individual
+  Agent-tool prompt by hand, which isn't automatic and isn't pretended to
+  be here.
+
+If you land here after a fresh debugging session of your own: this exact
+symptom was chased as a plugin bug across four earlier PRs (manifest `hooks`
+key on/off, version bumps) before anyone thought to check `/hooks`. Those
+PRs' changes are still correct and worth keeping — they just weren't the
+cause of this failure mode.
+
 ---
 
 ## Use

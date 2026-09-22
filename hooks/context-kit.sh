@@ -293,7 +293,13 @@ $NOTE"
     fi
   fi
 
-  if [ -n "$OUT" ]; then
+  # Bootstrap (context-cleanup Mode 0/A) stamps this same ruleset into
+  # CLAUDE.md so it still applies where a managed policy blocks plugin hooks
+  # outright. CLAUDE.md loads every session regardless, so re-injecting it
+  # here too would just double the tokens for everyone else.
+  if [ -f "$PROJ/CLAUDE.md" ] && grep -q '^## Lean execution' "$PROJ/CLAUDE.md" 2>/dev/null; then
+    printf '%s\n' "$OUT" | emit SessionStart
+  elif [ -n "$OUT" ]; then
     { printf '%s\n\n' "$OUT"; ruleset "$LEVEL"; } | emit SessionStart
   else
     ruleset "$LEVEL" | emit SessionStart

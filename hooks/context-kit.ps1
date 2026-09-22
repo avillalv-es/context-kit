@@ -217,6 +217,17 @@ function Invoke-Session {
     $notes += "context-kit: these procedures repeated $Threshold+ times and no skill covers them: $repeats. Capture the genuinely repeatable ones with the skill-capture skill."
   }
 
+  # Bootstrap (context-cleanup Mode 0/A) stamps this same ruleset into
+  # CLAUDE.md so it still applies where a managed policy blocks plugin hooks
+  # outright. CLAUDE.md loads every session regardless, so re-injecting it
+  # here too would just double the tokens for everyone else.
+  $claudeMdPath = Join-Path $Proj 'CLAUDE.md'
+  $hasRuleset = (Test-Path $claudeMdPath) -and ((Get-Content $claudeMdPath) -match '^## Lean execution')
+  if ($hasRuleset) {
+    Write-HookOutput 'SessionStart' ($notes -join "`n")
+    return
+  }
+
   $body = Get-Ruleset $level
   $text = if ($notes.Count) { ($notes -join "`n") + "`n`n" + $body } else { $body }
   Write-HookOutput 'SessionStart' $text
