@@ -288,11 +288,25 @@ function fm_line(line,   tmp, k, rest, v, n, arr, m) {
   return 0
 }
 
-# Just the `paths:` globs from a context file's frontmatter, newline-joined -
-# what scanfile()'s fm_paths holds after a full pass, without reading the
-# rest of the file. Strips a trailing \r so a file saved on Windows still
-# parses.
-function rule_paths(path,   line, full) {
+# Just the `paths:` globs from a context file's frontmatter, newline-joined,
+# without reading the rest of the file. Strips a trailing \r so a file saved
+# on Windows still parses - which scanfile() itself does not do, so this is
+# NOT guaranteed byte-identical to what scanfile()'s fm_paths holds after a
+# full pass on a CRLF file (only identical for LF).
+#
+# fm_line() shares its parser state with scanfile() through the same globals
+# (fm_desc/fm_name/fm_outcome/fm_paths/body_lines/infm/fmdone/inlist/listkey),
+# so this saves and restores every one of them around its own read. Without
+# that, calling rule_paths() while a scanfile() call is live further up the
+# stack - the code-map generator does this - would clobber state scanfile()
+# still has left to read after rule_paths() returns.
+function rule_paths(path,   line, full, out,
+                     save_desc, save_name, save_outcome, save_paths, save_lines,
+                     save_infm, save_fmdone, save_inlist, save_listkey) {
+  save_desc = fm_desc; save_name = fm_name; save_outcome = fm_outcome
+  save_paths = fm_paths; save_lines = body_lines
+  save_infm = infm; save_fmdone = fmdone; save_inlist = inlist; save_listkey = listkey
+
   fm_paths = ""
   full = (path ~ /^\//) ? path : root "/" path
   infm = 0; fmdone = 0; inlist = 0; listkey = ""; body_lines = 0
@@ -304,5 +318,11 @@ function rule_paths(path,   line, full) {
     body_lines++
   }
   close(full)
-  return fm_paths
+  out = fm_paths
+
+  fm_desc = save_desc; fm_name = save_name; fm_outcome = save_outcome
+  fm_paths = save_paths; body_lines = save_lines
+  infm = save_infm; fmdone = save_fmdone; inlist = save_inlist; listkey = save_listkey
+
+  return out
 }

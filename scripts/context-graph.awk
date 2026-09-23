@@ -117,7 +117,13 @@ function scanfile(path,   line, tmp, v, full) {
       if (v != "" && v !~ /^[a-z]+:\/\//) body_links = body_links v "\n"
     }
     tmp = line
-    while (match(tmp, /@[A-Za-z0-9_.\/-]+\.md/)) {
+    # A /regex/ literal containing a bracket expression with an escaped `/`
+    # is a busybox awk 1.36 trap: its lexer keeps the backslash as a member
+    # of the class instead of consuming it as the delimiter escape, so
+    # `see @docs\guide.md` linked on busybox and nowhere else. Passed as a
+    # STRING instead, `/` needs no escaping at all, so there is no stray
+    # backslash to become a class member - identical on all three awks.
+    while (match(tmp, "@[A-Za-z0-9_./-]+\\.md")) {
       v = substr(tmp, RSTART + 1, RLENGTH - 1)
       tmp = substr(tmp, RSTART + RLENGTH)
       body_links = body_links v "\n"
@@ -130,7 +136,10 @@ function scanfile(path,   line, tmp, v, full) {
     # link, so that restriction meant the single most common reference in
     # this ecosystem was silently uncaptured. Widened to allow a leading
     # `.` or `/` too, matching the @-reference pattern above.
-    while (match(tmp, /`[A-Za-z0-9._\/][A-Za-z0-9_.\/-]*`/)) {
+    # Same string-not-literal fix as the @-reference pattern above, and for
+    # the same reason: an escaped `/` inside `[...]` reads as two class
+    # members on busybox instead of one.
+    while (match(tmp, "`[A-Za-z0-9._/][A-Za-z0-9_./-]*`")) {
       v = substr(tmp, RSTART + 1, RLENGTH - 2)
       tmp = substr(tmp, RSTART + RLENGTH)
       body_refs = body_refs v "\n"

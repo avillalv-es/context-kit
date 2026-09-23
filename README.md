@@ -496,6 +496,7 @@ context-kit/
 │   ├── check.sh                 # self-check: versions, filenames, hook output
 │   ├── context-graph.sh         # build | serve | vault | open
 │   ├── code-graph.sh            # the file-level import graph
+│   ├── common.awk               # shared helpers, composed first with -f
 │   ├── code-graph.awk           # import extraction and path resolution
 │   ├── blast-radius.sh          # what breaks if this changes
 │   ├── blast-radius.awk         # the reverse traversal
