@@ -7,7 +7,10 @@
 # never saw the extractor or its output; the two are reconciled separately.
 # src/barrel.cjs: module.exports = on line 3, require("./lib/b") on line 4.
 # src/lib/external.ts has no edge: every specifier is a package not in the tree.
-# src/route-a.ts reaches src/lib/b.ts twice (./lib/b and @lib/b): one edge.
+# src/lib/string-decoy.ts has no edge: its require(/import( text is inside strings.
+# src/lib/evil.ts and src/lib/evil2.ts import nothing and nothing imports them.
+# src/lib/destructure-default.ts: a require used as a destructuring default is a real edge.
+# src/route-a.ts and src/route-b.ts reach src/lib/b.ts twice (./lib/b and @lib/b): one edge each.
 # src/Report.vue: only the <script> import counts, not the template text.
 #
 # Regenerate deliberately, never reflexively - the point of the file is
@@ -15,6 +18,8 @@
 src/Report.vue	src/lib/b.ts
 src/barrel.cjs	src/lib/b.ts
 src/lib/calls.ts	src/lib/b.ts
+src/lib/chained-calls.ts	src/lib/b.ts
+src/lib/destructure-default.ts	src/lib/b.ts
 src/lib/destructure.ts	src/lib/b.ts
 src/lib/export-require.ts	src/lib/b.ts
 src/lib/keywords-a.ts	src/lib/b.ts
@@ -23,3 +28,4 @@ src/lib/keywords-c.ts	src/lib/b.ts
 src/lib/multiline-require.ts	src/lib/b.ts
 src/lib/types-trap.ts	src/lib/b.ts
 src/route-a.ts	src/lib/b.ts
+src/route-b.ts	src/lib/b.ts

@@ -17,8 +17,11 @@
 # - src/lib/destructure.ts:4,6 defaults are not part of a name: `a = 1` -> a/a, `d: e = 2` -> e/d.
 # - src/lib/destructure.ts:5 rest element `...rest`: rest/*/module/cjs (it binds an object of the module's remaining exports; there is no export named rest).
 # - src/lib/calls.ts:4 require("./b").Foo and :5 require("./b")("app") are unbound cjs rows (empty local), not Foo/dbg bindings; :6 import("./b").then(...) is an unbound dynamic row.
+# - src/lib/chained-calls.ts: .x on the next code line (:6), ?.x (:8), ['x'] (:9), !.x (:10) are unbound cjs rows on the require( line; :13 await import("./b") with .then(...) on line 14 is an unbound dynamic row on line 13.
+# - src/lib/destructure-default.ts:8 require("./b") as the default of b in a multi-line `const {...} = obj`: one unbound cjs row on line 8 (the destructure binds from obj, not from the module); a gets no row.
+# - src/lib/string-decoy.ts: require(/import( text inside string defaults is data: no row and no edge to evil.ts/evil2.ts.
 # - src/lib/types-trap.ts:6 { type as t } imports the value `type` as t (no type flag); :7 type{T} is a type-only clause; :8 import type from is a default import named type (no flag).
-# - src/route-a.ts:5-6 one edge reached by two routes: conf is the confidence of the single imports.tsv edge (recorded by line 5, ./lib/b, EXTRACTED), so both rows are EXTRACTED; alias follows each statement's own route (line 5 no flag, line 6 alias).
+# - src/route-a.ts:5-6 and src/route-b.ts:6-7 one edge reached by two routes: conf is each statement's own resolution (relative EXTRACTED, no flag; @lib alias INFERRED, alias) whichever comes first.
 # - src/Report.vue:5 template text "import your data from "CSV" files" is not code: no row; only the <script> import on line 12.
 # - src/lib/keywords-a.ts:11, src/lib/types-trap.ts:10 local export const declarators and the export { ... } lists without from: no rows.
 src/Report.vue	12	src/lib/b.ts	x	x	named	EXTRACTED		./lib/b
@@ -27,6 +30,12 @@ src/lib/calls.ts	4	src/lib/b.ts		*	module	EXTRACTED	cjs	./b
 src/lib/calls.ts	5	src/lib/b.ts		*	module	EXTRACTED	cjs	./b
 src/lib/calls.ts	6	src/lib/b.ts		*	module	EXTRACTED	dynamic	./b
 src/lib/calls.ts	7	src/lib/b.ts	whole	*	module	EXTRACTED	cjs	./b
+src/lib/chained-calls.ts	10	src/lib/b.ts		*	module	EXTRACTED	cjs	./b
+src/lib/chained-calls.ts	13	src/lib/b.ts		*	module	EXTRACTED	dynamic	./b
+src/lib/chained-calls.ts	6	src/lib/b.ts		*	module	EXTRACTED	cjs	./b
+src/lib/chained-calls.ts	8	src/lib/b.ts		*	module	EXTRACTED	cjs	./b
+src/lib/chained-calls.ts	9	src/lib/b.ts		*	module	EXTRACTED	cjs	./b
+src/lib/destructure-default.ts	8	src/lib/b.ts		*	module	EXTRACTED	cjs	./b
 src/lib/destructure.ts	4	src/lib/b.ts	a	a	named	EXTRACTED	cjs	./b
 src/lib/destructure.ts	4	src/lib/b.ts	b	b	named	EXTRACTED	cjs	./b
 src/lib/destructure.ts	5	src/lib/b.ts	c	c	named	EXTRACTED	cjs	./b
@@ -52,4 +61,6 @@ src/lib/types-trap.ts	6	src/lib/b.ts	t	type	named	EXTRACTED		./b
 src/lib/types-trap.ts	7	src/lib/b.ts	T	T	named	EXTRACTED	type	./b
 src/lib/types-trap.ts	8	src/lib/b.ts	type	default	default	EXTRACTED		./b
 src/route-a.ts	5	src/lib/b.ts	b	b	named	EXTRACTED		./lib/b
-src/route-a.ts	6	src/lib/b.ts	b2	b2	named	EXTRACTED	alias	@lib/b
+src/route-a.ts	6	src/lib/b.ts	b2	b2	named	INFERRED	alias	@lib/b
+src/route-b.ts	6	src/lib/b.ts	viaAlias	x	named	INFERRED	alias	@lib/b
+src/route-b.ts	7	src/lib/b.ts	viaRel	b	named	EXTRACTED		./lib/b

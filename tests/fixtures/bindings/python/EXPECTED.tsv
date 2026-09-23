@@ -8,10 +8,19 @@
 # from M import X lists both M (app/models/__init__.py) and the submodule M.X.
 # app/models/thing.py: from . import thing names the file itself - no self edge.
 # app/loader.py is stored CRLF; its backslash continuations still join.
-# Bare undotted os, a_package_not_in_this_tree, a_missing_reporting_lib: no edge.
+# app/continuations.py: the continued line holds two statements (app.models, app.util; app.reports).
+# app/help_text.py: the "; from app import (x" string is data; from app import util lists M
+# (undotted `app` resolves exactly from the root to app/__init__.py) and the subpackage app.util.
+# Bare undotted os, a_package_not_in_this_tree, a_missing_reporting_lib: no root-level file, no edge.
 #
 # Regenerate deliberately, never reflexively - the point of the file is
 # that it does not move when the extractor changes.
+app/continuations.py	app/models/__init__.py
+app/continuations.py	app/reports.py
+app/continuations.py	app/util/__init__.py
+app/help_text.py	app/__init__.py
+app/help_text.py	app/models/__init__.py
+app/help_text.py	app/util/__init__.py
 app/loader.py	app/models/__init__.py
 app/loader.py	app/models/base.py
 app/loader.py	app/models/database.py

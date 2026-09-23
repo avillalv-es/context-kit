@@ -100,7 +100,6 @@ function emit(from, to, lang, form, conf, lno) {
   k = from SUBSEP to SUBSEP form
   if (k in emitted) return
   emitted[k] = 1
-  emitconf[k] = conf   # the conf THIS row actually carries, for setbind()
   printf "%s\t%s\t%s\t%s\t%s\t%s\n", from, to, lang, form, conf, lno
   nedges++
 }
@@ -432,24 +431,21 @@ function grab(line, re, lead, trail,   s) {
 # Python call it handles (regardless of whether emit() itself dedups the
 # edge, since emit() returning early is exactly what would otherwise hide the
 # target from the caller). setbind() is the one place that decides a
-# candidate counts, and MUST run after emit() for the same (from,to,form) -
-# two reasons:
-#   - a self-edge (hit == from) is never emitted by emit() either, so
-#     recording one here would leave a bindings row with no matching
-#     imports.tsv edge - the one invariant bindings.tsv promises never to
-#     break. bindself distinguishes that (a target that WOULD have resolved,
-#     just to itself) from a genuine non-resolution, for a caller that needs
-#     to tell the two apart (see py_submodule_names()).
-#   - emit() dedups on (from,to,form): the SECOND statement to reach the same
-#     edge under a different conf (an alias next to a relative import to the
-#     same file, say) does not get its own imports.tsv row, so its binding's
-#     conf must be whatever emit() actually wrote the FIRST time, in
-#     emitconf[], not this call's own (possibly different) conf.
-function setbind(f, t, form, conf, alias,   k) {
+# candidate counts: a self-edge (hit == from) is never emitted by emit()
+# either, so recording one here would leave a bindings row with no matching
+# imports.tsv edge - the one invariant bindings.tsv promises never to break.
+# bindself distinguishes that (a target that WOULD have resolved, just to
+# itself) from a genuine non-resolution, for a caller that needs to tell the
+# two apart (see py_submodule_names()).
+# conf is always THIS statement's OWN resolution, never emit()'s (emit()
+# dedups on (from,to,form), so a second statement reaching the same edge by
+# a different route - an alias next to a relative import to the same file,
+# say - gets no imports.tsv row of its own, but its binding still reports
+# its own conf, which can differ from the row imports.tsv shows).
+function setbind(f, t, form, conf, alias) {
   if (t != "" && t != f) {
-    k = f SUBSEP t SUBSEP form
     bindto = t
-    bindconf = (k in emitconf) ? emitconf[k] : conf
+    bindconf = conf
     bindalias = alias
     bindself = 0
   } else {
@@ -680,15 +676,43 @@ function js_bind_clause(bfrom, bline, clause, reexport, modtext,
 
 # True when a require()/import() call's own closing ")" - the FIRST thing in
 # `rest`, since the match this follows stopped at the module string's closing
-# quote - is immediately followed by "." or "(": reading a member off the
-# result, or calling it again, rather than end of statement, ";" or ",". Only
-# a call that is the WHOLE initializer binds anything; one that is chained,
-# called again, passed on or returned through a member/call never is.
-function js_call_chained(rest,   t) {
+# quote - is immediately followed by ".", "?.", "[", "!" or "(": reading a
+# member off the result, calling it again, or non-null-asserting it, rather
+# than end of statement, ";" or ",". Only a call that is the WHOLE
+# initializer binds anything; one that is chained, called again, passed on
+# or returned through a member/call never is. When ")" ends the line with
+# nothing else after it, the same question is asked of the next CODE line
+# (G1): `const b = require('./b')` then `  .default` on the following line
+# chains it exactly as `.default` on the same line would.
+function js_call_chained(rest, lno, lang,   t) {
   t = rest
   if (!sub(/^[ \t]*\)/, "", t)) return 0
   sub(/^[ \t]*/, "", t)
-  return (t ~ /^[.(]/) ? 1 : 0
+  if (t ~ /^[.?!([]/) return 1
+  if (t != "") return 0
+  return js_peek_chain(lno, lang)
+}
+
+# Peeks forward from physical line `lno0 + 1` (FL[], the whole-file buffer
+# scan() slurped up front - see scan()'s own comment) for the next line whose
+# code is non-blank once comments and strings are stripped, skipping blank
+# and comment-only lines exactly as the main scan does, and reports whether
+# ITS first character chains a require()/import() call the same way a same-
+# line one would (see js_call_chained()). decomment() mutates the shared
+# blockstate/blockq as it goes - saved and restored around every call here,
+# so this speculative look-ahead can never desync the real scan when it
+# reaches these same lines for real.
+function js_peek_chain(lno0, lang,   i, savebs, saveq, pc) {
+  savebs = blockstate; saveq = blockq
+  for (i = lno0 + 1; i <= nlines; i++) {
+    pc = decomment(FL[i], lang)
+    if (pc ~ /^[ \t]*$/) continue
+    sub(/^[ \t]*/, "", pc)
+    blockstate = savebs; blockq = saveq
+    return (pc ~ /^[.?!([]/) ? 1 : 0
+  }
+  blockstate = savebs; blockq = saveq
+  return 0
 }
 
 # What a require()/import() call's return value is bound to, read from the
@@ -786,18 +810,116 @@ function py_stmt(from, code, lno, bline,   m, names, mto, mconf) {
   }
 }
 
-function scan(from,   lang, line, lno, full, code, m, pend, i) {
+# The 1-based position of the first ';' in `s` that is not inside a string
+# body, or 0 when there is none. `s` must be the CURRENT `code` (or an
+# unmodified prefix of it), so the global `strmask` - decomment()'s own
+# per-character string mask - still lines up with it position for position.
+function py_unquoted_semi(s,   n, i) {
+  n = length(s)
+  for (i = 1; i <= n; i++)
+    if (substr(s, i, 1) == ";" && substr(strmask, i, 1) != "S") return i
+  return 0
+}
+
+# Split `s` (== the current `code`, so `strmask` aligns with it) on every ';'
+# that is NOT inside a string body - same interface as split(): fills
+# 1-indexed `arr`, returns the count. A ';' quoted inside a string
+# (`HELP = "usage: a; from app import (x"`) never fakes a second statement
+# out of the string's own text (R3).
+function py_split_semi(s, arr,   n, i, c, cur, cnt) {
+  n = length(s); cur = ""; cnt = 0
+  for (i = 1; i <= n; i++) {
+    c = substr(s, i, 1)
+    if (c == ";" && substr(strmask, i, 1) != "S") { cnt++; arr[cnt] = cur; cur = "" }
+    else cur = cur c
+  }
+  cnt++; arr[cnt] = cur
+  return cnt
+}
+
+# One physical line's worth of Python statements (or a leftover tail of one,
+# after a backslash continuation ended mid-line on an unquoted ';' - R4a).
+# `import json; import app.util.reading` is two statements, and a reader
+# that takes only the first silently loses the second - so this always
+# splits on ';' first (outside strings, R3), even when only the LAST
+# statement on the line turns out to open a continuation: `import os; from
+# app.models import database, \` continues past the semicolon just as it
+# would have starting the line, and `import os` beside it is still its own,
+# complete statement.
+function py_dispatch(pfrom, plang, pcode, plno,
+                      nsemi, SC, i, seg, namepart, names, pclosed) {
+  nsemi = py_split_semi(pcode, SC)
+  for (i = 1; i <= nsemi; i++) {
+    seg = SC[i]
+    if (i == nsemi && seg ~ /^[ \t]*from[ \t].*import[ \t]*\(/) {
+      pybase = seg
+      sub(/^[ \t]*from[ \t]+/, "", pybase)
+      namepart = pybase
+      sub(/[ \t].*$/, "", pybase)
+      pymto = ""; pymconf = ""
+      if (pybase != "") { resolve(pfrom, plang, pybase, "from-import", plno); pymto = bindto; pymconf = bindconf }
+      pyline = stmtline
+      sub(/^[^ \t]*[ \t]+import[ \t]*\(/, "", namepart)
+      pclosed = 0
+      if (namepart ~ /\)/) { pclosed = 1; sub(/\).*$/, "", namepart) }
+      if (namepart != "") py_submodule_names(pfrom, plno, pyline, pybase, pymto, pymconf, namepart)
+      pyplain = 0
+      if (!pclosed) { pyopen = 1; pyparen = 1 }
+      continue
+    }
+    if (i == nsemi && seg ~ /^[ \t]*from[ \t].*import[ \t]+[^\\]*\\[ \t]*$/) {
+      pybase = seg
+      sub(/^[ \t]*from[ \t]+/, "", pybase)
+      names = pybase
+      sub(/[ \t].*$/, "", pybase)
+      pymto = ""; pymconf = ""
+      if (pybase != "") { resolve(pfrom, plang, pybase, "from-import", plno); pymto = bindto; pymconf = bindconf }
+      pyline = stmtline
+      sub(/^[^ \t]*[ \t]+import[ \t]+/, "", names)
+      sub(/\\[ \t]*$/, "", names)
+      py_submodule_names(pfrom, plno, pyline, pybase, pymto, pymconf, names)
+      pyopen = 1; pyparen = 0; pyplain = 0
+      continue
+    }
+    # A plain `import a, b, \` continuation: no `from` base, each name
+    # resolves as its own import, same as py_plain_names() does inline.
+    if (i == nsemi && seg ~ /^[ \t]*import[ \t]+[^\\]*\\[ \t]*$/) {
+      names = seg
+      sub(/^[ \t]*import[ \t]+/, "", names)
+      sub(/\\[ \t]*$/, "", names)
+      pyline = stmtline
+      py_plain_names(pfrom, plno, pyline, names)
+      pyopen = 1; pyparen = 0; pyplain = 1
+      continue
+    }
+    py_stmt(pfrom, seg, plno, stmtline)
+  }
+}
+
+function scan(from,   lang, line, lno, full, code, m, pend, pendmask, i) {
   lang = lang_of(extof(from))
   if (lang == "") return
   full = (from ~ /^\//) ? from : root "/" from
-  blockstate = 0; blockq = ""; ingo = 0; prevjvm = ""; pyopen = ""; pyplain = 0; pcount = 0
-  lno = 0
-  pend = ""
+
+  # Slurp the file into FL[] (global, capped at 4000 lines - a generated
+  # bundle has nothing to say) up front, BOM/CR-stripped exactly as a
+  # line-at-a-time read would, so the main loop below can index by physical
+  # line number and js_peek_chain() (G1) can look at a LATER line without
+  # racing a second read stream against this one.
+  nlines = 0
   while ((getline line < full) > 0) {
-    lno++
-    if (lno == 1) sub(/^\357\273\277/, "", line)   # UTF-8 BOM
-    sub(/\r$/, "", line)                             # a file saved on Windows
-    if (lno > 4000) break          # a generated bundle has nothing to say
+    nlines++
+    if (nlines == 1) sub(/^\357\273\277/, "", line)   # UTF-8 BOM
+    sub(/\r$/, "", line)                                # a file saved on Windows
+    FL[nlines] = line
+    if (nlines >= 4000) break
+  }
+  close(full)
+
+  blockstate = 0; blockq = ""; ingo = 0; prevjvm = ""; pyopen = ""; pyplain = 0; pcount = 0
+  pend = ""
+  for (lno = 1; lno <= nlines; lno++) {
+    line = FL[lno]
     # A TypeScript triple-slash directive is a comment by syntax and a
     # dependency by meaning, so it must be read before comments are removed.
     if (lang == "js" && line ~ /^[ \t]*\/\/\/[ \t]*<reference/) {
@@ -809,7 +931,16 @@ function scan(from,   lang, line, lno, full, code, m, pend, i) {
       continue
     }
     code = decomment(line, lang)
-    if (code ~ /^[ \t]*$/) continue
+    if (code ~ /^[ \t]*$/) {
+      # A Python backslash continuation joins exactly the next physical
+      # line; when that line is comment-only (or blank), it contributes
+      # nothing and the logical line ends right there - the statement after
+      # it is its own, not more of the continuation's name list (R4b). A
+      # parenthesised continuation is unaffected: a blank/comment line
+      # inside `( ... )` is ordinary Python and stays open.
+      if (lang == "py" && pyopen != "" && !pyparen) pyopen = ""
+      continue
+    }
     rawcode = code
 
     # An import statement split across lines: join until the specifier lands.
@@ -820,11 +951,13 @@ function scan(from,   lang, line, lno, full, code, m, pend, i) {
     # (pre-join) code was, so js_lineof() can map a position back to ITS
     # physical line - not every position in a joined buffer is on the line
     # the join started on: see js_lineof()'s own comment for why that matters.
+    # `pendmask` is `pend`'s own strmask, carried along unchanged - a plain
+    # dot-fill here (R1) would flatten a joined-in string body to "code",
+    # letting a require()/import() written inside it (`a = "require(./evil)"`)
+    # match for real once a later line's `}` completes the statement.
     joined = 0
     if (pend != "") {
-      pad = sprintf("%" (length(pend) + 1) "s", "")
-      gsub(/ /, ".", pad)
-      strmask = pad strmask
+      strmask = pendmask "." strmask
       code = pend " " code
       pend = ""
       joined = 1
@@ -833,15 +966,15 @@ function scan(from,   lang, line, lno, full, code, m, pend, i) {
     pcount++; pline[pcount] = lno; plen[pcount] = length(rawcode)
 
     if (lang == "js") {
-      if (code ~ /^[ \t]*(import|export)[ \t]/ && code !~ /['"]/ && code !~ /;[ \t]*$/) { pend = code; continue }
+      if (code ~ /^[ \t]*(import|export)[ \t]/ && code !~ /['"]/ && code !~ /;[ \t]*$/) { pend = code; pendmask = strmask; continue }
       # `await import(` with the specifier on the following line.
-      if (code ~ /import[ \t]*\([ \t]*$/) { pend = code; continue }
+      if (code ~ /import[ \t]*\([ \t]*$/) { pend = code; pendmask = strmask; continue }
       # `const {` / `let {` / `var {` (optionally `export`-prefixed) whose
       # brace does not close on this line: could be a destructured
       # require()/import() a few lines down - js_bind_call() finds it there
       # once the buffer holds the whole declaration. Harmless to join even
       # when it turns out to be an ordinary destructure with no import in it.
-      if (code ~ /^[ \t]*(export[ \t]+)?(const|let|var)[ \t]*\{[^{}]*$/) { pend = code; continue }
+      if (code ~ /^[ \t]*(export[ \t]+)?(const|let|var)[ \t]*\{[^{}]*$/) { pend = code; pendmask = strmask; continue }
       m = grab(code, "^[ \t]*(import|export)[^'\"]*from[ \t]*['\"][^'\"]+['\"]", 0, 0)
       if (m != "") {
         fullmatch = m
@@ -872,12 +1005,22 @@ function scan(from,   lang, line, lno, full, code, m, pend, i) {
         quoted = in_string(off + RSTART)
         head = substr(code, 1, off + RSTART - 1)
         callpos = off + RSTART
+        matchend = callpos + RLENGTH - 1
         off += RSTART + RLENGTH - 1
         rest = substr(rest, RSTART + RLENGTH)
         if (quoted) continue
-        chained = js_call_chained(rest)
+        chained = js_call_chained(rest, lno, lang)
         sub(/^[^'"]*['"]/, "", m); sub(/['"]$/, "", m)
-        resolve(from, lang, m, "require", lno)
+        # The imports.tsv edge's line is the physical line holding the END of
+        # THIS call's own match - its closing quote (R2) - not raw `lno`: a
+        # `const {\n a,\n b = require(...),\n} = obj` destructure joins
+        # several MORE lines into the buffer after this call's own text
+        # already landed (see the "const {" join in the main loop), so by
+        # the time this runs `lno` is the destructure's CLOSING line, not the
+        # call's. js_lineof(matchend), not js_lineof(callpos): a call whose
+        # own text spans lines (`await import(\nspec\n)`) must keep reporting
+        # where its specifier landed, matching every pre-existing form.
+        resolve(from, lang, m, "require", js_lineof(matchend))
         js_bind_call(from, js_lineof(callpos), head, "cjs", m, chained)
       }
       # `require.resolve("...")` is a dependency written the long way.
@@ -903,12 +1046,13 @@ function scan(from,   lang, line, lno, full, code, m, pend, i) {
         quoted = in_string(off + RSTART)
         head = substr(code, 1, off + RSTART - 1)
         callpos = off + RSTART
+        matchend = callpos + RLENGTH - 1
         off += RSTART + RLENGTH - 1
         rest = substr(rest, RSTART + RLENGTH)
         if (quoted) continue
-        chained = js_call_chained(rest)
+        chained = js_call_chained(rest, lno, lang)
         sub(/^[^'"]*['"]/, "", m); sub(/['"]$/, "", m)
-        resolve(from, lang, m, "dynamic-import", lno)
+        resolve(from, lang, m, "dynamic-import", js_lineof(matchend))   # R2, see the require() case above
         js_bind_call(from, js_lineof(callpos), head, "dynamic", m, chained)
       }
       continue
@@ -926,66 +1070,28 @@ function scan(from,   lang, line, lno, full, code, m, pend, i) {
       # submodule of some remembered base.
       if (pyopen != "") {
         t = code
-        if (pyparen) { if (t ~ /\)/) { pyopen = ""; sub(/\).*$/, "", t) } }
-        else if (t !~ /\\[ \t]*$/) pyopen = ""
-        else sub(/\\[ \t]*$/, "", t)
+        ended = 0; semipos = 0
+        if (pyparen) { if (t ~ /\)/) { pyopen = ""; ended = 1; sub(/\).*$/, "", t) } }
+        else if (t !~ /\\[ \t]*$/) {
+          pyopen = ""; ended = 1
+          # Only the part of `t` before the first ';' OUTSIDE a string is
+          # more of the continuation's name list - anything after starts a
+          # fresh statement of its own (R4a): `import app.models, \` +
+          # `    app.util; import app.reports` still gives app.reports its
+          # own row, not a junk name glued onto app.util's.
+          semipos = py_unquoted_semi(t)
+          if (semipos > 0) t = substr(code, 1, semipos - 1)
+        } else sub(/\\[ \t]*$/, "", t)
         if (pyplain) py_plain_names(from, lno, pyline, t)
         else py_submodule_names(from, lno, pyline, pybase, pymto, pymconf, t)
+        if (ended && semipos > 0) {
+          code = substr(code, semipos + 1)
+          strmask = substr(strmask, semipos + 1)
+          py_dispatch(from, lang, code, lno)
+        }
         continue
       }
-      # `import json; import app.util.reading` is two statements, and a
-      # reader that takes only the first silently loses the second - so this
-      # always splits on `;` first, even when only the LAST statement on the
-      # line turns out to open a continuation: `import os; from app.models
-      # import database, \` continues past the semicolon just as it would
-      # have starting the line, and `import os` beside it is still its own,
-      # complete statement.
-      nsemi = split(code, SC, /;/)
-      for (i = 1; i <= nsemi; i++) {
-        seg = SC[i]
-        if (i == nsemi && seg ~ /^[ \t]*from[ \t].*import[ \t]*\(/) {
-          pybase = seg
-          sub(/^[ \t]*from[ \t]+/, "", pybase)
-          namepart = pybase
-          sub(/[ \t].*$/, "", pybase)
-          pymto = ""; pymconf = ""
-          if (pybase != "") { resolve(from, lang, pybase, "from-import", lno); pymto = bindto; pymconf = bindconf }
-          pyline = stmtline
-          sub(/^[^ \t]*[ \t]+import[ \t]*\(/, "", namepart)
-          pclosed = 0
-          if (namepart ~ /\)/) { pclosed = 1; sub(/\).*$/, "", namepart) }
-          if (namepart != "") py_submodule_names(from, lno, pyline, pybase, pymto, pymconf, namepart)
-          pyplain = 0
-          if (!pclosed) { pyopen = 1; pyparen = 1 }
-          continue
-        }
-        if (i == nsemi && seg ~ /^[ \t]*from[ \t].*import[ \t]+[^\\]*\\[ \t]*$/) {
-          pybase = seg
-          sub(/^[ \t]*from[ \t]+/, "", pybase)
-          names = pybase
-          sub(/[ \t].*$/, "", pybase)
-          pymto = ""; pymconf = ""
-          if (pybase != "") { resolve(from, lang, pybase, "from-import", lno); pymto = bindto; pymconf = bindconf }
-          pyline = stmtline
-          sub(/^[^ \t]*[ \t]+import[ \t]+/, "", names)
-          sub(/\\[ \t]*$/, "", names)
-          py_submodule_names(from, lno, pyline, pybase, pymto, pymconf, names)
-          pyopen = 1; pyparen = 0; pyplain = 0
-          continue
-        }
-        # A plain `import a, b, \` continuation: no `from` base, each name
-        # resolves as its own import, same as py_plain_names() does inline.
-        if (i == nsemi && seg ~ /^[ \t]*import[ \t]+[^\\]*\\[ \t]*$/) {
-          names = seg
-          sub(/^[ \t]*import[ \t]+/, "", names)
-          sub(/\\[ \t]*$/, "", names)
-          pyline = stmtline
-          py_plain_names(from, lno, pyline, names)
-          pyopen = 1; pyparen = 0; pyplain = 1
-          continue
-        }
-        py_stmt(from, seg, lno, stmtline)
-      }
+      py_dispatch(from, lang, code, lno)
       continue
     }
 
@@ -1004,7 +1110,7 @@ function scan(from,   lang, line, lno, full, code, m, pend, i) {
       # An old formatter wraps a long import after a dot. It is still one
       # declaration, and half of it resolves to nothing.
       if (code ~ /^[ \t]*import[ \t].*\.[ \t]*$/) {
-        pend = code; sub(/[ \t]*$/, "", pend); prevjvm = ""; continue
+        pend = code; sub(/[ \t]*$/, "", pend); pendmask = substr(strmask, 1, length(pend)); prevjvm = ""; continue
       }
       # ...and the other half of the same wrap: a line that STARTS with the
       # dot, which on its own looks like nothing at all.

@@ -16,8 +16,18 @@
 # - app/models/thing.py:6 from . import thing, base: thing resolves as a submodule to the importing file itself, which has no edge, so the row is module with empty to/conf (not a named row to app/models/__init__.py); base is an ordinary module row.
 # - app/main.py:5 and app/reports.py:5 parenthesised lists (opened mid-line / continued on line 6): every row carries the from line 5; `database as db` -> db, `base as baseline` -> baseline, imported * (module kind).
 # - app/loader.py is CRLF: the CR is not part of any name and adds no line; `import os; from app.models import database, \` gives os plus database/base, all on line 5; `import app.util, \` gives app.util and app.util.base on line 8.
+# - app/continuations.py:7-8 `import app.models, \` + `app.util; import app.reports`: app.models and app.util carry line 7 (their statement's start); import app.reports starts on physical line 8, so its row carries line 8, not the logical line's 7.
+# - app/continuations.py:13 import app.util after `x = 1 + \` / `2` / `# note` is its own statement on line 13 (a second app.util row, distinct by line).
+# - app/help_text.py:6 "; from app import (x" inside a string is data: no row; :8 from app import util -> util is a subpackage (app/util/__init__.py), module row with module column `app`; the M edge to app/__init__.py (undotted `app`, exact root match) gets no row.
 # - app/registry.py:5 `as b` binds the first element only: b (module app.models.base) and app.models.thing (dotted local as written).
-# - Bare undotted os, a_package_not_in_this_tree (module rows) and a_missing_reporting_lib (named row build_chart): empty to/conf.
+# - Bare undotted os, a_package_not_in_this_tree (module rows) and a_missing_reporting_lib (named row build_chart): no root-level (or src/) file of that name, so empty to/conf.
+# - conf is each statement's own resolution; every Python resolution here is an exact package path, EXTRACTED.
+app/continuations.py	13	app/util/__init__.py	app.util	*	module	EXTRACTED		app.util
+app/continuations.py	7	app/models/__init__.py	app.models	*	module	EXTRACTED		app.models
+app/continuations.py	7	app/util/__init__.py	app.util	*	module	EXTRACTED		app.util
+app/continuations.py	8	app/reports.py	app.reports	*	module	EXTRACTED		app.reports
+app/help_text.py	7	app/models/__init__.py	app.models	*	module	EXTRACTED		app.models
+app/help_text.py	8	app/util/__init__.py	util	*	module	EXTRACTED		app
 app/loader.py	5		os	*	module			os
 app/loader.py	5	app/models/base.py	base	*	module	EXTRACTED		app.models
 app/loader.py	5	app/models/database.py	database	*	module	EXTRACTED		app.models
