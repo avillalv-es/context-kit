@@ -13,6 +13,7 @@
 # (undotted `app` resolves exactly from the root to app/__init__.py) and the subpackage app.util.
 # app/string_continuation.py: "import app.evil" is inside a backslash-continued string - no edge to app/evil.py.
 # app/paren_then_stmt.py, app/backslash_variants.py: a statement after `);` or `;` on a continued line is its own.
+# app/style_string.py, app/quoted_hash.py, app/quote_mix.py: `#` / `'''` inside backslash-continued strings is data.
 # Bare undotted os, a_package_not_in_this_tree, a_missing_reporting_lib: no root-level file, no edge.
 #
 # Regenerate deliberately, never reflexively - the point of the file is
@@ -42,9 +43,14 @@ app/paren_then_stmt.py	app/__init__.py
 app/paren_then_stmt.py	app/models/__init__.py
 app/paren_then_stmt.py	app/reports.py
 app/paren_then_stmt.py	app/util/__init__.py
+app/quote_mix.py	app/reports.py
+app/quoted_hash.py	app/models/__init__.py
+app/quoted_hash.py	app/util/__init__.py
 app/registry.py	app/models/base.py
 app/registry.py	app/models/thing.py
 app/reports.py	app/models/__init__.py
 app/reports.py	app/models/base.py
 app/reports.py	app/models/database.py
 app/string_continuation.py	app/util/__init__.py
+app/style_string.py	app/__init__.py
+app/style_string.py	app/util/__init__.py

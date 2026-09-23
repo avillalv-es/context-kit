@@ -698,9 +698,12 @@ function js_call_chained(rest, lno, lang,   t) {
 # code is non-blank once comments and strings are stripped, skipping blank
 # and comment-only lines exactly as the main scan does, and reports whether
 # ITS first character chains a require()/import() call the same way a same-
-# line one would (see js_call_chained()) - except "!": that reads as the
-# NEXT statement's own non-null-assertion or negation (`!function(){}()`),
-# never as chaining onto THIS call, so only a same-line "!" counts (SPEC).
+# line one would (see js_call_chained()) - except a BARE "!": that reads as
+# the NEXT statement's own non-null-assertion or negation
+# (`!function(){}()`), never as chaining onto THIS call, so only a same-line
+# "!" counts that way (SPEC). "!=" and "!==" are not bare, though - they DO
+# continue THIS call's own expression (`require('./cfg')` then `!==
+# undefined`), so they still chain same as "." or "(" would.
 # decomment() mutates the shared blockstate/blockq/strmask as it goes - all
 # three are saved and restored around every call here (F1), so this
 # speculative look-ahead can never desync the real scan when it reaches
@@ -713,71 +716,10 @@ function js_peek_chain(lno0, lang,   i, savebs, saveq, savesm, pc) {
     if (pc ~ /^[ \t]*$/) continue
     sub(/^[ \t]*/, "", pc)
     blockstate = savebs; blockq = saveq; strmask = savesm
-    return (pc ~ /^[.?([]/) ? 1 : 0
+    return (pc ~ /^[.?([]/ || pc ~ /^!==?/) ? 1 : 0
   }
   blockstate = savebs; blockq = saveq; strmask = savesm
   return 0
-}
-
-# The 1-based position of the LAST top-level ',' in `s` - depth 0 in
-# parens/brackets/braces, and outside any string body (per the global
-# `strmask`, so `s` must be the current `code` or an unmodified prefix of
-# it) - or 0 when there is none. A comma inside a nested call, array,
-# object or string is never "top-level": `foo(a, cfg = require(...))`'s
-# comma sits at depth 1 and is never returned here (item 9's `head`
-# narrowing must never mistake a function call's argument list for a
-# declarator list).
-function js_last_top_comma(s,   n, i, c, depth, pos) {
-  n = length(s); depth = 0; pos = 0
-  for (i = 1; i <= n; i++) {
-    if (substr(strmask, i, 1) == "S") continue
-    c = substr(s, i, 1)
-    if (c == "(" || c == "[" || c == "{") depth++
-    else if (c == ")" || c == "]" || c == "}") depth--
-    else if (c == "," && depth == 0) pos = i
-  }
-  return pos
-}
-
-# True when the top-level comma at `uptopos` in `s` sits inside a
-# `(export)? (const|let|var)` statement's own declarator list: the nearest
-# such keyword before it (word-bounded, via lastindex()) exists, and
-# nothing at depth 0 between that keyword and `uptopos` ends the statement
-# first (a ';'). Used by js_decl_head() (item 9) so a LATER declarator's
-# require()/import() call - `const a = ..., cfg = require(...)` - is
-# recognised as bound, while an unrelated comma (a function call's argument
-# list, which js_last_top_comma() never even returns) or a plain
-# reassignment with no governing keyword is not.
-function js_decl_list_open(s, uptopos,   kwend, i, c, depth) {
-  kwend = lastindex(substr(s, 1, uptopos), "const")
-  i = lastindex(substr(s, 1, uptopos), "let"); if (i > kwend) kwend = i
-  i = lastindex(substr(s, 1, uptopos), "var"); if (i > kwend) kwend = i
-  if (kwend == 0) return 0
-  depth = 0
-  for (i = kwend; i <= uptopos; i++) {
-    if (substr(strmask, i, 1) == "S") continue
-    c = substr(s, i, 1)
-    if (c == "(" || c == "[" || c == "{") depth++
-    else if (c == ")" || c == "]" || c == "}") depth--
-    else if (c == ";" && depth == 0) return 0
-  }
-  return 1
-}
-
-# js_bind_call()'s single-declarator patterns all anchor on seeing
-# `(const|let|var)` directly before the bound name - true for the FIRST
-# declarator, but a LATER one in the same statement (`const a = ..., cfg =
-# require(...)`) has no keyword of its own right before it (item 9). Read
-# `head` back only to the nearest top-level ',' (js_last_top_comma()); when
-# a const/let/var statement really governs it (js_decl_list_open()), splice
-# a synthetic keyword back on so js_bind_call()'s EXISTING patterns match
-# the later declarator exactly as they would the first, unmodified. Falls
-# back to `head` unchanged whenever there is no such comma, or it turns out
-# not to be one.
-function js_decl_head(head,   cpos) {
-  cpos = js_last_top_comma(head)
-  if (cpos == 0 || !js_decl_list_open(head, cpos)) return head
-  return "const " substr(head, cpos + 1)
 }
 
 # What a require()/import() call's return value is bound to, read from the
@@ -1051,6 +993,7 @@ function scan(from,   lang, line, lno, full, code, m, pend, pendmask, i) {
       }
       continue
     }
+    savebs2 = blockstate; saveq2 = blockq
     code = decomment(line, lang)
 
     # decomment() carries no memory across lines of a plain single/double-
@@ -1065,18 +1008,43 @@ function scan(from,   lang, line, lno, full, code, m, pend, pendmask, i) {
     # cannot fool a later regex into reading it as a statement) and
     # remasked as string, and only what follows is asked of decomment()
     # again, fresh, for an accurate read of the real code that follows it.
+    # The close is searched for in the RAW `line`, never in `code` (a
+    # follow-up review, F3-gap): decomment() may itself have already cut
+    # `code` short - at a "#" it (wrongly, not knowing it's still in a
+    # string) reads as a real comment, or at a "'''"/`"""` it reads as a
+    # triple-quote marker - losing the real closing quote that follows in
+    # the source. Searching `code` for it then either invents a match
+    # somewhere in a LATER, unrelated line's own string (misreading ITS
+    # quote as the close) or, if the quote character never happens to
+    # reappear verbatim, keeps blanking every line for the rest of the file.
     if (lang == "py" && pyopenq != "") {
-      p = py_find_close(code, pyopenq)
+      # The blind call above may have misread part of the STILL-OPEN string
+      # as real code - a stray "#" or "'''"/`"""` inside it looks like a
+      # comment or a triple-quote marker to a decomment() call that does not
+      # yet know it is still in a string - and mutated blockstate/blockq as
+      # a side effect. This line's `code`/`strmask` are replaced outright
+      # below regardless, so that mutation is undone first: otherwise it can
+      # wedge blockstate into a phantom block that swallows arbitrary LATER,
+      # unrelated lines once this string's real close is no longer around to
+      # accidentally close it back out again.
+      blockstate = savebs2; blockq = saveq2
+      p = py_find_close(line, pyopenq)
       if (p > 0) {
-        suffixcode = decomment(substr(code, p + 1), lang)
+        suffixcode = decomment(substr(line, p + 1), lang)
         suffixmask = strmask
         pyopenq = (length(suffixmask) > length(suffixcode)) ? py_open_quote(suffixcode) : ""
         strmask = repeat_char(p - 1, "S") "." suffixmask
-        code = repeat_char(p - 1, " ") substr(code, p, 1) suffixcode
+        code = repeat_char(p - 1, " ") substr(line, p, 1) suffixcode
       } else {
         # The string runs past this whole line too - none of it is real
-        # code, and `pyopenq` stays open for the next line.
+        # code. `pyopenq` stays open for the next line ONLY when the raw
+        # line itself ends in "\": a genuine Python string continuation
+        # requires every line up to the close to end that way, so its
+        # absence here means the string's true close is simply not on this
+        # line (or ever) - not a reason to keep hunting arbitrarily many
+        # later lines for the same quote character.
         code = ""; strmask = ""
+        if (line !~ /\\[ \t]*$/) pyopenq = ""
       }
     } else if (lang == "py") {
       pyopenq = (length(strmask) > length(code)) ? py_open_quote(code) : ""
@@ -1179,11 +1147,7 @@ function scan(from,   lang, line, lno, full, code, m, pend, pendmask, i) {
         # own text spans lines (`await import(\nspec\n)`) must keep reporting
         # where its specifier landed, matching every pre-existing form.
         resolve(from, lang, m, "require", js_lineof(matchend))
-        # js_decl_head() (item 9): a LATER declarator of the same
-        # `const a = ..., cfg = require(...)` statement has no keyword
-        # directly before it - read `head` back only to its own nearest
-        # top-level comma so js_bind_call() still recognises it as bound.
-        js_bind_call(from, js_lineof(callpos), js_decl_head(head), "cjs", m, chained)
+        js_bind_call(from, js_lineof(callpos), head, "cjs", m, chained)
       }
       # `require.resolve("...")` is a dependency written the long way.
       rest = code; off = 0
@@ -1215,7 +1179,7 @@ function scan(from,   lang, line, lno, full, code, m, pend, pendmask, i) {
         chained = js_call_chained(rest, lno, lang)
         sub(/^[^'"]*['"]/, "", m); sub(/['"]$/, "", m)
         resolve(from, lang, m, "dynamic-import", js_lineof(matchend))   # R2, see the require() case above
-        js_bind_call(from, js_lineof(callpos), js_decl_head(head), "dynamic", m, chained)   # item 9, see the require() case above
+        js_bind_call(from, js_lineof(callpos), head, "dynamic", m, chained)
       }
       continue
     }

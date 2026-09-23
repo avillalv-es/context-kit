@@ -23,6 +23,7 @@
 # - app/backslash_variants.py:11-12 the trailing backslash inside the parentheses is only a continuation (no name `\`): models/util module rows on line 11.
 # - app/paren_then_stmt.py:5-6 `import app.reports` after `util);` on line 6 is its own statement on line 6, not part of the from-list (line 5).
 # - app/string_continuation.py:5-6 "a; \<newline>import app.evil" is one string: no row, no edge to app/evil.py; `import app.util` after the closing quote and `;` starts on line 6.
+# - app/style_string.py:7-8, app/quoted_hash.py:5-6, app/quote_mix.py:6-7 backslash-continued strings whose second line holds `#333`, `b # c` or `it'''s`: string content (no comment, no triple quote), so the following imports are real: style_string.py:9 util, quoted_hash.py:7 app.util and :9 app.models, quote_mix.py:8 app.reports; the "; import app.reports as r" string on style_string.py:10 gives nothing.
 # - from app import ... (undotted M, exact root match to app/__init__.py): the M edge gets no row, as for every from-import.
 # - app/registry.py:5 `as b` binds the first element only: b (module app.models.base) and app.models.thing (dotted local as written).
 # - Bare undotted os, a_package_not_in_this_tree (module rows) and a_missing_reporting_lib (named row build_chart): no root-level (or src/) file of that name, so empty to/conf.
@@ -53,9 +54,13 @@ app/models/thing.py	6	app/models/base.py	base	*	module	EXTRACTED		.
 app/paren_then_stmt.py	5	app/models/__init__.py	models	*	module	EXTRACTED		app
 app/paren_then_stmt.py	5	app/util/__init__.py	util	*	module	EXTRACTED		app
 app/paren_then_stmt.py	6	app/reports.py	app.reports	*	module	EXTRACTED		app.reports
+app/quote_mix.py	8	app/reports.py	app.reports	*	module	EXTRACTED		app.reports
+app/quoted_hash.py	7	app/util/__init__.py	app.util	*	module	EXTRACTED		app.util
+app/quoted_hash.py	9	app/models/__init__.py	app.models	*	module	EXTRACTED		app.models
 app/registry.py	5	app/models/base.py	b	*	module	EXTRACTED		app.models.base
 app/registry.py	5	app/models/thing.py	app.models.thing	*	module	EXTRACTED		app.models.thing
 app/reports.py	5	app/models/base.py	baseline	*	module	EXTRACTED		app.models
 app/reports.py	5	app/models/database.py	database	*	module	EXTRACTED		app.models
 app/reports.py	8		build_chart	build_chart	named			a_missing_reporting_lib
 app/string_continuation.py	6	app/util/__init__.py	app.util	*	module	EXTRACTED		app.util
+app/style_string.py	9	app/util/__init__.py	util	*	module	EXTRACTED		app

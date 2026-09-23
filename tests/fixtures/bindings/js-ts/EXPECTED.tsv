@@ -22,6 +22,8 @@ src/barrel.cjs	src/lib/b.ts
 src/lib/bang-iife.js	src/lib/a.js
 src/lib/calls.ts	src/lib/b.ts
 src/lib/chained-calls.ts	src/lib/b.ts
+src/lib/comma-and-var.js	src/lib/a.js
+src/lib/comma-and-var.js	src/lib/cfg.js
 src/lib/destructure-default.ts	src/lib/b.ts
 src/lib/destructure.ts	src/lib/b.ts
 src/lib/export-require.ts	src/lib/b.ts
@@ -31,6 +33,7 @@ src/lib/keywords-c.ts	src/lib/b.ts
 src/lib/multiline-require.ts	src/lib/b.ts
 src/lib/no-semicolons.js	src/lib/cfg.js
 src/lib/no-semicolons.js	src/lib/page.js
+src/lib/require-comparison.js	src/lib/cfg.js
 src/lib/semicolon-string.js	src/lib/a.js
 src/lib/types-trap.ts	src/lib/b.ts
 src/route-a.ts	src/lib/b.ts
