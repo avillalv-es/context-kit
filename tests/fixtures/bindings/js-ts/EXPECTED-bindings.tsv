@@ -1,0 +1,55 @@
+# Expected bindings rows for the bindings trap fixture (js-ts).
+# from<TAB>line<TAB>to<TAB>local<TAB>imported<TAB>kind<TAB>conf<TAB>flags<TAB>module,
+# one per line, byte-sorted. scripts/check.sh asserts this set exactly against
+# <out>/bindings.tsv: a missing line is a binding the extractor stopped finding,
+# an extra line is one it invented. Both are regressions.
+#
+# Written from the fixture sources and the bindings spec alone, by an
+# independent oracle that never saw the extractor or its output; the two are
+# reconciled separately. `to` is pinned to the edges in EXPECTED.tsv.
+#
+# Regenerate deliberately, never reflexively - the point of the file is
+# that it does not move when the extractor changes.
+#
+# Judgement calls:
+# - src/barrel.cjs:4 module.exports = (line 3) / require("./lib/b") (line 4): unbound cjs row on line 4, the line holding require(, not the module.exports line.
+# - src/lib/multiline-require.ts:6 destructured require split over lines 3-6: both rows carry line 6, the line holding require(, not the `const {` line 3.
+# - src/lib/destructure.ts:4,6 defaults are not part of a name: `a = 1` -> a/a, `d: e = 2` -> e/d.
+# - src/lib/destructure.ts:5 rest element `...rest`: rest/*/module/cjs (it binds an object of the module's remaining exports; there is no export named rest).
+# - src/lib/calls.ts:4 require("./b").Foo and :5 require("./b")("app") are unbound cjs rows (empty local), not Foo/dbg bindings; :6 import("./b").then(...) is an unbound dynamic row.
+# - src/lib/types-trap.ts:6 { type as t } imports the value `type` as t (no type flag); :7 type{T} is a type-only clause; :8 import type from is a default import named type (no flag).
+# - src/route-a.ts:5-6 one edge reached by two routes: conf is the confidence of the single imports.tsv edge (recorded by line 5, ./lib/b, EXTRACTED), so both rows are EXTRACTED; alias follows each statement's own route (line 5 no flag, line 6 alias).
+# - src/Report.vue:5 template text "import your data from "CSV" files" is not code: no row; only the <script> import on line 12.
+# - src/lib/keywords-a.ts:11, src/lib/types-trap.ts:10 local export const declarators and the export { ... } lists without from: no rows.
+src/Report.vue	12	src/lib/b.ts	x	x	named	EXTRACTED		./lib/b
+src/barrel.cjs	4	src/lib/b.ts		*	module	EXTRACTED	cjs	./lib/b
+src/lib/calls.ts	4	src/lib/b.ts		*	module	EXTRACTED	cjs	./b
+src/lib/calls.ts	5	src/lib/b.ts		*	module	EXTRACTED	cjs	./b
+src/lib/calls.ts	6	src/lib/b.ts		*	module	EXTRACTED	dynamic	./b
+src/lib/calls.ts	7	src/lib/b.ts	whole	*	module	EXTRACTED	cjs	./b
+src/lib/destructure.ts	4	src/lib/b.ts	a	a	named	EXTRACTED	cjs	./b
+src/lib/destructure.ts	4	src/lib/b.ts	b	b	named	EXTRACTED	cjs	./b
+src/lib/destructure.ts	5	src/lib/b.ts	c	c	named	EXTRACTED	cjs	./b
+src/lib/destructure.ts	5	src/lib/b.ts	rest	*	module	EXTRACTED	cjs	./b
+src/lib/destructure.ts	6	src/lib/b.ts	e	d	named	EXTRACTED	cjs	./b
+src/lib/export-require.ts	5	src/lib/b.ts	legacy	*	module	EXTRACTED	cjs	./b
+src/lib/export-require.ts	6	src/lib/b.ts	aa	a	named	EXTRACTED	cjs	./b
+src/lib/external.ts	4		z	z	named			left-pad-imaginary
+src/lib/external.ts	5		leftover	default	default			not-a-real-package/subpath
+src/lib/external.ts	6		dynamic	*	module		cjs	also-not-real
+src/lib/keywords-a.ts	6	src/lib/b.ts	importMap	default	default	EXTRACTED		./b
+src/lib/keywords-a.ts	7	src/lib/b.ts	important	important	named	EXTRACTED		./b
+src/lib/keywords-a.ts	7	src/lib/b.ts	other	other	named	EXTRACTED		./b
+src/lib/keywords-a.ts	8	src/lib/b.ts	importer	importer	reexport	EXTRACTED		./b
+src/lib/keywords-a.ts	9	src/lib/b.ts	exportData	exportData	named	EXTRACTED		./b
+src/lib/keywords-b.ts	3	src/lib/b.ts	exported	exported	named	EXTRACTED		./b
+src/lib/keywords-b.ts	3	src/lib/b.ts	other	other	named	EXTRACTED		./b
+src/lib/keywords-c.ts	6	src/lib/b.ts	exported	a	named	EXTRACTED		./b
+src/lib/keywords-c.ts	7	src/lib/b.ts	reimport	a	named	EXTRACTED		./b
+src/lib/multiline-require.ts	6	src/lib/b.ts	a	a	named	EXTRACTED	cjs	./b
+src/lib/multiline-require.ts	6	src/lib/b.ts	c	b	named	EXTRACTED	cjs	./b
+src/lib/types-trap.ts	6	src/lib/b.ts	t	type	named	EXTRACTED		./b
+src/lib/types-trap.ts	7	src/lib/b.ts	T	T	named	EXTRACTED	type	./b
+src/lib/types-trap.ts	8	src/lib/b.ts	type	default	default	EXTRACTED		./b
+src/route-a.ts	5	src/lib/b.ts	b	b	named	EXTRACTED		./lib/b
+src/route-a.ts	6	src/lib/b.ts	b2	b2	named	EXTRACTED	alias	@lib/b

@@ -1,0 +1,1 @@
+"""Bindings-trap fixture package."""

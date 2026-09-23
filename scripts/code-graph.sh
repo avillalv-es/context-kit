@@ -111,7 +111,7 @@ while IFS= read -r TSC; do
   SCOPE="$(dirname "$TSC")"
   [ "$SCOPE" = "." ] && SCOPE=""
   awk -v scope="$SCOPE" '
-    { buf = buf " " $0 }
+    { sub(/\r$/, ""); buf = buf " " $0 }
     END {
       # A config that does not "extends" another is self-contained, so an
       # alias the outer config declares does NOT apply to files under it.
@@ -141,7 +141,7 @@ while IFS= read -r TSC; do
           vals = substr(vals, RSTART + RLENGTH)
           sub(/\*$/, "", v); sub(/^\.\//, "", v)
           if (v == "") continue
-          print scope "\t" k "\t" (base == "" ? v : base "/" v) "\t" wild "\t" own
+          print scope "\t" k "\t" (base == "" ? v : base "/" v) "\t" wild "\t" own "\t" "ts"
         }
       }
     }
@@ -156,7 +156,7 @@ while IFS= read -r PJ; do
   SCOPE="$(dirname "$PJ")"
   [ "$SCOPE" = "." ] && SCOPE=""
   awk -v scope="$SCOPE" '
-    { buf = buf " " $0 }
+    { sub(/\r$/, ""); buf = buf " " $0 }
     END {
       if (!match(buf, /"imports"[ \t]*:[ \t]*\{[^}]*\}/)) exit
       blk = substr(buf, RSTART, RLENGTH)
@@ -168,16 +168,20 @@ while IFS= read -r PJ; do
         wild = (k ~ /\*$/) ? 1 : 0
         sub(/\*$/, "", k); sub(/\*$/, "", v); sub(/^\.\//, "", v)
         if (k == "" || v == "") continue
-        print scope "\t" k "\t" v "\t" wild
+        print scope "\t" k "\t" v "\t" wild "\t" "\t" "pkg"
       }
     }
   ' "$PJ" >> "$TMP/aliases.tsv" 2>/dev/null
 done < "$TMP/pkgjsons.txt"
 
-# composer PSR-4 does the same job for PHP.
+# composer PSR-4 does the same job for PHP. It shares aliases.tsv with the
+# tsconfig/package.json entries above, but is tagged "psr4" (6th column) so
+# the JS resolver's bindings `alias` flag - reserved for a tsconfig/jsconfig
+# paths entry or a package.json imports entry - is never set through it, even
+# when a PSR-4 prefix happens to also resolve a bare JS specifier.
 if [ -f composer.json ]; then
   awk '
-    { buf = buf " " $0 }
+    { sub(/\r$/, ""); buf = buf " " $0 }
     END {
       if (!match(buf, /"psr-4"[ \t]*:[ \t]*\{[^}]*\}/)) exit
       blk = substr(buf, RSTART, RLENGTH)
@@ -190,7 +194,7 @@ if [ -f composer.json ]; then
         sub(/\/$/, "", k)
         sub(/^\.\//, "", v); sub(/\/$/, "", v)
         if (k == "") continue
-        print "\t" k "/\t" v "/\t1"
+        print "\t" k "/\t" v "/\t1" "\t" "\t" "psr4"
       }
     }
   ' composer.json >> "$TMP/aliases.tsv" 2>/dev/null

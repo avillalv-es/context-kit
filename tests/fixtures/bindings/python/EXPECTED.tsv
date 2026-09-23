@@ -1,0 +1,30 @@
+# Expected import edges for the bindings trap fixture (python).
+# from<TAB>to, one per line. scripts/check.sh asserts this set exactly:
+# a missing line is an edge the extractor stopped finding, an extra line
+# is an edge it invented. Both are regressions.
+#
+# Written from the fixture sources alone, by an independent oracle that
+# never saw the extractor or its output; the two are reconciled separately.
+# from M import X lists both M (app/models/__init__.py) and the submodule M.X.
+# app/models/thing.py: from . import thing names the file itself - no self edge.
+# app/loader.py is stored CRLF; its backslash continuations still join.
+# Bare undotted os, a_package_not_in_this_tree, a_missing_reporting_lib: no edge.
+#
+# Regenerate deliberately, never reflexively - the point of the file is
+# that it does not move when the extractor changes.
+app/loader.py	app/models/__init__.py
+app/loader.py	app/models/base.py
+app/loader.py	app/models/database.py
+app/loader.py	app/util/__init__.py
+app/loader.py	app/util/base.py
+app/main.py	app/models/__init__.py
+app/main.py	app/models/base.py
+app/main.py	app/models/database.py
+app/main.py	app/models/thing.py
+app/models/thing.py	app/models/__init__.py
+app/models/thing.py	app/models/base.py
+app/registry.py	app/models/base.py
+app/registry.py	app/models/thing.py
+app/reports.py	app/models/__init__.py
+app/reports.py	app/models/base.py
+app/reports.py	app/models/database.py

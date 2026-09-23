@@ -1,0 +1,25 @@
+# Expected import edges for the bindings trap fixture (js-ts).
+# from<TAB>to, one per line. scripts/check.sh asserts this set exactly:
+# a missing line is an edge the extractor stopped finding, an extra line
+# is an edge it invented. Both are regressions.
+#
+# Written from the fixture sources alone, by an independent oracle that
+# never saw the extractor or its output; the two are reconciled separately.
+# src/barrel.cjs: module.exports = on line 3, require("./lib/b") on line 4.
+# src/lib/external.ts has no edge: every specifier is a package not in the tree.
+# src/route-a.ts reaches src/lib/b.ts twice (./lib/b and @lib/b): one edge.
+# src/Report.vue: only the <script> import counts, not the template text.
+#
+# Regenerate deliberately, never reflexively - the point of the file is
+# that it does not move when the extractor changes.
+src/Report.vue	src/lib/b.ts
+src/barrel.cjs	src/lib/b.ts
+src/lib/calls.ts	src/lib/b.ts
+src/lib/destructure.ts	src/lib/b.ts
+src/lib/export-require.ts	src/lib/b.ts
+src/lib/keywords-a.ts	src/lib/b.ts
+src/lib/keywords-b.ts	src/lib/b.ts
+src/lib/keywords-c.ts	src/lib/b.ts
+src/lib/multiline-require.ts	src/lib/b.ts
+src/lib/types-trap.ts	src/lib/b.ts
+src/route-a.ts	src/lib/b.ts
