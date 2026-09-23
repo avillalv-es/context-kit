@@ -210,6 +210,17 @@ awk -f "$PLUGIN_ROOT/scripts/common.awk" -f "$PLUGIN_ROOT/scripts/code-graph.awk
     -v unresolved="$TMP/unresolved.tsv" \
     -v bindings="$TMP/bindings.tsv" \
     < "$TMP/src.txt" > "$TMP/imports.tsv" 2> "$TMP/stats.txt"
+AWK_RC=$?
+if [ "$AWK_RC" -ne 0 ]; then
+  # A crashed awk (mawk's fixed-size sprintf buffer aborting mid-run, say)
+  # may have already written SOME rows to $TMP/imports.tsv before it died -
+  # a partial, order-dependent table that looks plausible and is silently
+  # wrong. Never sort it into $OUT: better no update at all than one that
+  # looks complete but is missing whatever came after the crash.
+  FIRSTLINE="$(head -1 "$TMP/stats.txt" 2>/dev/null)"
+  printf 'code-graph: awk failed (%s)\n' "${FIRSTLINE:-awk exited $AWK_RC}" >&2
+  exit 1
+fi
 
 sort -u "$TMP/imports.tsv" > "$OUT/imports.tsv" 2>/dev/null || cp "$TMP/imports.tsv" "$OUT/imports.tsv"
 sort -u "$TMP/unresolved.tsv" > "$OUT/unresolved.tsv" 2>/dev/null || cp "$TMP/unresolved.tsv" "$OUT/unresolved.tsv"

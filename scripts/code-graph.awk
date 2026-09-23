@@ -855,9 +855,13 @@ function py_split_semi(s, arr,   n, i, c, cur, cnt) {
 # "").
 function repeat_char(n, ch,   s) {
   if (n <= 0) return ""
-  s = sprintf("%" n "s", "")
-  gsub(/ /, ch, s)
-  return s
+  # No sprintf() width built from an input length: mawk 1.3.4's sprintf has
+  # a fixed 8192-byte buffer, and a width past that aborts the whole run
+  # ("program limit exceeded") - losing every table this run would have
+  # written, not just this one line's. String doubling has no such limit.
+  s = ch
+  while (length(s) < n) s = s s
+  return substr(s, 1, n)
 }
 
 # The quote character ("'" or '"') still open at the END of `s` - already

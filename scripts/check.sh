@@ -890,6 +890,70 @@ else
   diff "$TMP/crlf-tsconfig-lf.tsv" "$TMP/crlf-tsconfig-cr.tsv" 2>/dev/null | head -8 | sed 's/^/        /'
 fi
 
+# --- 16e. a Python string continued past mawk's sprintf limit --------------
+# mawk 1.3.4's sprintf has a fixed 8192-byte buffer. code-graph.awk must
+# never build a fill string with sprintf's "%Ns" width form using a length
+# read from the source (repeat_char() doubles a string instead) - a single
+# Python string continued with "\" past column 8191 must not abort the WHOLE
+# run and lose every other file's edges along with it.
+BIGP="$TMP/bigstring"; rm -rf "$BIGP"; mkdir -p "$BIGP/app"
+: > "$BIGP/app/__init__.py"
+: > "$BIGP/app/models.py"
+: > "$BIGP/app/reports.py"
+awk 'BEGIN {
+  printf "x = \"\\\n"
+  s = ""
+  for (i = 0; i < 8300; i++) s = s "q"
+  printf "%s\"\n", s
+  printf "import app.models\n"
+}' > "$BIGP/big.py"
+printf 'import app.models\n' > "$BIGP/ordinary1.py"
+printf 'import app.reports\n' > "$BIGP/ordinary2.py"
+BIGOUT="$TMP/bigstring-out"; rm -rf "$BIGOUT"
+if sh scripts/code-graph.sh --root "$BIGP" --out "$BIGOUT" --quiet >/dev/null 2>&1; then
+  if grep -q 'ordinary1\.py	app/models\.py' "$BIGOUT/imports.tsv" 2>/dev/null \
+     && grep -q 'ordinary2\.py	app/reports\.py' "$BIGOUT/imports.tsv" 2>/dev/null; then
+    pass "a Python string continued past 8191 columns does not lose the file's other edges"
+  else
+    fail "a long continued Python string lost an ordinary import edge elsewhere in the same run"
+    cat "$BIGOUT/imports.tsv" 2>/dev/null | head -8 | sed 's/^/        /'
+  fi
+else
+  fail "code-graph crashed on a Python string continued past 8191 columns"
+fi
+
+# --- 16f. code-graph.sh fails loudly, and writes nothing, when awk fails ---
+# Before this, code-graph.sh always exited 0 - a crashed awk (mawk's sprintf
+# limit above, or anything else) left whatever partial rows it had already
+# buffered sorted straight into $OUT, silently, as if the run had succeeded.
+FAKEBIN="$TMP/fakeawkbin"; rm -rf "$FAKEBIN"; mkdir -p "$FAKEBIN"
+for t in sh find git grep sed sort wc cut dirname rm cp head mkdir cat mv tr; do
+  bp=$(command -v "$t" 2>/dev/null) && ln -sf "$bp" "$FAKEBIN/$t"
+done
+cat > "$FAKEBIN/awk" <<'AWKEOF'
+#!/bin/sh
+printf 'awk: program limit exceeded: sprintf buffer size=8192\n' >&2
+exit 2
+AWKEOF
+chmod +x "$FAKEBIN/awk"
+FAILOUT="$TMP/awkfail-out"; rm -rf "$FAILOUT"
+FAILMSG=$(PATH="$FAKEBIN" sh scripts/code-graph.sh --root "$GP" --out "$FAILOUT" --quiet 2>&1)
+FAILRC=$?
+if [ "$FAILRC" -ne 0 ]; then
+  pass "code-graph.sh exits non-zero when its awk fails"
+else
+  fail "code-graph.sh exited 0 even though its awk failed"
+fi
+case "$FAILMSG" in
+  *"awk failed"*) pass "code-graph.sh reports the awk failure" ;;
+  *) fail "code-graph.sh did not report the awk failure ($FAILMSG)" ;;
+esac
+if [ -f "$FAILOUT/imports.tsv" ]; then
+  fail "code-graph.sh wrote a (partial) imports.tsv despite awk failing"
+else
+  pass "code-graph.sh writes no imports.tsv when awk fails"
+fi
+
 # --- 17. blast-radius walks importers, not imports -------------------------
 BRP="$TMP/brproj"
 rm -rf "$BRP"; mkdir -p "$BRP/src/lib" "$BRP/src/api"
