@@ -16,7 +16,10 @@ function globre(g,   out, i, c, n) {
       out = out "[^/]*"; i++; continue
     }
     if (c == "?") { out = out "[^/]"; i++; continue }
-    if (c ~ /[.\[\]()+^$|\\{}]/) { out = out "\\" c; i++; continue }
+    # A character-class regex literal here breaks busybox awk 1.36's loader
+    # outright ("Invalid content of \{\}"), whether or not it is reached -
+    # see scripts/common.awk's globre(). Same fix: a plain string search.
+    if (index(".[]()+^$|\\{}", c) > 0) { out = out "\\" c; i++; continue }
     out = out c; i++
   }
   return out "$"

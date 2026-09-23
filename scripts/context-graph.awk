@@ -83,30 +83,7 @@ function resolve_candidate(src, t,   cand, d) {
   return cand
 }
 
-# Translate a paths: glob into an ERE. POSIX awk has no fnmatch, and the
-# difference between `src/*` and `src/**` is the whole point of tier 2 - a
-# glob that silently matches everything is a tier-1 entry wearing a costume.
-function globre(g,   out, i, c, n) {
-  out = "^"
-  n = length(g)
-  i = 1
-  while (i <= n) {
-    c = substr(g, i, 1)
-    if (c == "*") {
-      if (substr(g, i, 3) == "**/") { out = out "([^/]+/)*"; i += 3; continue }
-      if (substr(g, i, 2) == "**")  { out = out ".*";        i += 2; continue }
-      out = out "[^/]*"; i++; continue
-    }
-    if (c == "?") { out = out "[^/]"; i++; continue }
-    if (c ~ /[.\[\]()+^$|\\{}]/) { out = out "\\" c; i++; continue }
-    out = out c
-    i++
-  }
-  return out "$"
-}
-
-function basename(p,   b) { b = p; sub(/.*\//, "", b); return b }
-function stripext(p,   b) { b = basename(p); sub(/\.[^.]*$/, "", b); return b }
+function stem(p,   b) { b = basename(p); sub(/\.[^.]*$/, "", b); return b }
 
 # Pull frontmatter and body facts out of a context file in one pass.
 # Sets: fm_desc, fm_paths (newline-joined), body_links (newline-joined),
@@ -119,7 +96,7 @@ function stripext(p,   b) { b = basename(p); sub(/\.[^.]*$/, "", b); return b }
 # sentence IS the wiring, so matching on prose would be the only way to see it.
 # Matching on backticks and slash-commands rather than bare words keeps it from
 # firing on every English word that happens to be a skill name.
-function scanfile(path,   line, infm, fmdone, inlist, listkey, k, v, rest, m, tmp, full) {
+function scanfile(path,   line, tmp, v, full) {
   fm_desc = ""; fm_paths = ""; body_links = ""; body_refs = ""
   body_lines = 0; body_bytes = 0
   fm_outcome = ""; fm_name = ""
@@ -127,44 +104,7 @@ function scanfile(path,   line, infm, fmdone, inlist, listkey, k, v, rest, m, tm
   infm = 0; fmdone = 0; inlist = 0; listkey = ""
   while ((getline line < full) > 0) {
     body_bytes += length(line) + 1
-    if (!fmdone && line ~ /^---[ \t]*$/) {
-      if (!infm && body_lines == 0) { infm = 1; continue }
-      if (infm) { infm = 0; fmdone = 1; inlist = 0; continue }
-    }
-    if (infm) {
-      if (line ~ /^[ \t]*-[ \t]*/ && inlist) {
-        tmp = line
-        sub(/^[ \t]*-[ \t]*/, "", tmp)
-        gsub(/^["']|["'][ \t]*$/, "", tmp)
-        sub(/[ \t]+$/, "", tmp)
-        if (tmp != "" && listkey == "paths") fm_paths = fm_paths tmp "\n"
-        continue
-      }
-      inlist = 0
-      if (match(line, /^[A-Za-z_][A-Za-z0-9_-]*:/)) {
-        k = substr(line, 1, RLENGTH - 1)
-        rest = substr(line, RLENGTH + 1)
-        sub(/^[ \t]+/, "", rest)
-        sub(/[ \t]+$/, "", rest)
-        gsub(/^["']|["']$/, "", rest)
-        if (rest == "") { inlist = 1; listkey = k; continue }
-        if (k == "description") fm_desc = rest
-        else if (k == "name") fm_name = rest
-        else if (k == "outcome") fm_outcome = rest
-        else if (k == "paths") {
-          # inline flow list: paths: ["a/**", "b/**"]
-          tmp = rest
-          gsub(/^\[|\]$/, "", tmp)
-          n = split(tmp, arr, /[ \t]*,[ \t]*/)
-          for (m = 1; m <= n; m++) {
-            v = arr[m]
-            gsub(/^["' \t]+|["' \t]+$/, "", v)
-            if (v != "") fm_paths = fm_paths v "\n"
-          }
-        }
-      }
-      continue
-    }
+    if (fm_line(line)) continue
     if (line ~ /^[ \t]*$/) continue
     if (line ~ /^[ \t]*<!--/) continue
     body_lines++
@@ -177,7 +117,7 @@ function scanfile(path,   line, infm, fmdone, inlist, listkey, k, v, rest, m, tm
       if (v != "" && v !~ /^[a-z]+:\/\//) body_links = body_links v "\n"
     }
     tmp = line
-    while (match(tmp, /@[A-Za-z0-9_./-]+\.md/)) {
+    while (match(tmp, /@[A-Za-z0-9_.\/-]+\.md/)) {
       v = substr(tmp, RSTART + 1, RLENGTH - 1)
       tmp = substr(tmp, RSTART + RLENGTH)
       body_links = body_links v "\n"
@@ -237,8 +177,8 @@ BEGIN {
     linksrc[id] = body_links
     root_id = id
   } else if (kind == "rule") {
-    id = "rule:" stripext(path)
-    i = addnode(id, stripext(path), "rule", path, 2)
+    id = "rule:" stem(path)
+    i = addnode(id, stem(path), "rule", path, 2)
     scanfile(path)
     nlines[i] = body_lines
     nbytes[i] = body_bytes
@@ -246,8 +186,8 @@ BEGIN {
     rulepaths[id] = fm_paths
     linksrc[id] = body_links
   } else if (kind == "knowledge") {
-    id = "knowledge:" stripext(path)
-    i = addnode(id, stripext(path), "knowledge", path, 3)
+    id = "knowledge:" stem(path)
+    i = addnode(id, stem(path), "knowledge", path, 3)
     scanfile(path)
     nlines[i] = body_lines
     nbytes[i] = body_bytes
@@ -265,7 +205,7 @@ BEGIN {
     linksrc[id] = body_links
     skillname[nm] = id
   } else if (kind == "command") {
-    nm = stripext(path)
+    nm = stem(path)
     id = "command:" nm
     i = addnode(id, "/" nm, "command", path, 3)
     scanfile(path)
@@ -274,7 +214,7 @@ BEGIN {
     linksrc[id] = body_links
     commandname[nm] = id
   } else if (kind == "agent") {
-    nm = stripext(path)
+    nm = stem(path)
     id = "agent:" nm
     i = addnode(id, nm, "agent", path, 3)
     scanfile(path)
@@ -282,7 +222,7 @@ BEGIN {
     ndesc[i] = fm_desc
     linksrc[id] = body_links
   } else if (kind == "finding") {
-    nm = stripext(path)
+    nm = stem(path)
     id = "finding:" nm
     i = addnode(id, nm, "finding", path, 3)
     scanfile(path)

@@ -191,7 +191,7 @@ if [ -f composer.json ]; then
 fi
 
 : > "$TMP/unresolved.tsv"
-awk -f "$PLUGIN_ROOT/scripts/code-graph.awk" \
+awk -f "$PLUGIN_ROOT/scripts/common.awk" -f "$PLUGIN_ROOT/scripts/code-graph.awk" \
     -v filelist="$TMP/files.txt" \
     -v root="$ROOT" \
     -v gomods="$TMP/gomods.tsv" \

@@ -167,7 +167,7 @@ do_build() {
   STAMP="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
   [ -n "$STAMP" ] || STAMP="unknown"
 
-  awk -f "$PLUGIN_ROOT/scripts/context-graph.awk" \
+  awk -f "$PLUGIN_ROOT/scripts/common.awk" -f "$PLUGIN_ROOT/scripts/context-graph.awk" \
       -v root="$ROOT" \
       -v filelist="$TMP/files.txt" \
       -v events="$EV" \

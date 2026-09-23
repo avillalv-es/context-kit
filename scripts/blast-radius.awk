@@ -18,8 +18,6 @@
 # somewhere to click) is adapted from graphify's affected.py (Apache-2.0,
 # Graphify Labs). See NOTICE.
 
-function basename(p,   b) { b = p; sub(/.*\//, "", b); return b }
-
 BEGIN {
   FS = "\t"
   if (depth == "" || depth + 0 < 1) depth = 3

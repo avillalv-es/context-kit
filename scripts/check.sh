@@ -15,6 +15,54 @@ pass() { printf 'ok    %s\n' "$1"; }
 
 cd "$(dirname "$0")/.." || exit 1
 
+# --- 0. every awk entry point composes and parses --------------------------
+# A parse error (a bad regex, a stray brace) exits before any rule runs, and
+# mawk treats a duplicate function name across composed -f files as one - so
+# running each entry point at all, on whatever awk is on PATH, is the check.
+# Nothing here asserts what the run PRODUCES; that is every later section's
+# job. Minimal, always-valid input keeps a script from exiting through its
+# own "nothing to do" guard (blast-radius with no seeds, say), which is a
+# clean exit too, just not the one this section is testing for.
+T0="${TMPDIR:-/tmp}/ck-check0-$$"
+mkdir -p "$T0/vault" 2>/dev/null
+: > "$T0/empty.txt"
+printf 'src/seed.ts\n' > "$T0/seeds.txt"
+printf '{"id": "x", "label": "X", "kind": "doc"}\n' > "$T0/vault.jsonl"
+
+P0OK=1
+if ! awk -f scripts/common.awk -f scripts/code-graph.awk \
+      -v filelist="$T0/empty.txt" < /dev/null >/dev/null 2>&1; then
+  fail "scripts/common.awk + scripts/code-graph.awk does not parse under this awk"
+  P0OK=0
+fi
+if ! awk -f scripts/common.awk -f scripts/context-graph.awk \
+      < /dev/null >/dev/null 2>&1; then
+  fail "scripts/common.awk + scripts/context-graph.awk does not parse under this awk"
+  P0OK=0
+fi
+if ! awk -f scripts/blast-radius.awk \
+      -v seeds="$T0/seeds.txt" -v edges="$T0/empty.txt" < /dev/null >/dev/null 2>&1; then
+  fail "scripts/blast-radius.awk does not parse under this awk"
+  P0OK=0
+fi
+if ! awk -f scripts/context-vault.awk \
+      -v vault="$T0/vault" -v manifest="$T0/manifest.txt" -v root="$T0" \
+      < "$T0/vault.jsonl" >/dev/null 2>&1; then
+  fail "scripts/context-vault.awk does not parse under this awk"
+  P0OK=0
+fi
+if ! awk -f scripts/findings.awk < /dev/null >/dev/null 2>&1; then
+  fail "scripts/findings.awk does not parse under this awk"
+  P0OK=0
+fi
+if ! awk -f ab/measure-static.awk \
+      -v arm=b -v dest="$T0" -v touched= < /dev/null >/dev/null 2>&1; then
+  fail "ab/measure-static.awk does not parse under this awk"
+  P0OK=0
+fi
+rm -rf "$T0" 2>/dev/null
+[ "$P0OK" -eq 1 ] && pass "every awk entry point composes and parses"
+
 # --- 1. version consistency ------------------------------------------------
 # Every manifest staying stale together looks like agreement to a naive check,
 # so compare the values rather than asserting they are all present.
@@ -105,7 +153,7 @@ pass "level filter keeps unconditional lines at every level"
 # --- 6. hooks.json references files that exist -----------------------------
 for f in hooks/context-kit.sh hooks/context-kit.ps1 hooks/rules.md knowledge/platform-native.md \
          scripts/context-graph.sh scripts/context-graph.awk scripts/context-vault.awk \
-         scripts/findings.sh scripts/findings.awk templates/graph/viewer.html; do
+         scripts/findings.sh scripts/findings.awk scripts/common.awk templates/graph/viewer.html; do
   [ -f "$f" ] || fail "missing $f"
 done
 pass "referenced hook and script files present"
@@ -325,7 +373,7 @@ fi
 # This branch of context-graph.awk had no end-to-end coverage at all.
 GEV="$TMP/gev.tsv"
 printf '1\tread\ts1\tREADME.md\n2\tskill\ts1\tcontext-cleanup\n3\tagent\ts1\texplorer\n' > "$GEV"
-GJ=$(awk -f scripts/context-graph.awk -v root="$TMP/proj" -v events="$GEV" </dev/null 2>/dev/null)
+GJ=$(awk -f scripts/common.awk -f scripts/context-graph.awk -v root="$TMP/proj" -v events="$GEV" </dev/null 2>/dev/null)
 for want in '"kind": "session"' '"kind": "skill"' '"kind": "agent"' '"kind": "file"'; do
   case "$GJ" in
     *"$want"*) ;;
@@ -343,7 +391,7 @@ while [ "$i" -lt 200 ]; do
   printf '1\tread\ts1\tf%s.txt\n' "$i" >> "$GEV"
   i=$((i + 1))
 done
-NF_=$(awk -f scripts/context-graph.awk -v root="$TMP/proj" -v events="$GEV" -v actcap=20 </dev/null 2>/dev/null \
+NF_=$(awk -f scripts/common.awk -f scripts/context-graph.awk -v root="$TMP/proj" -v events="$GEV" -v actcap=20 </dev/null 2>/dev/null \
       | tr ',' '\n' | grep -c '"kind": "file"')
 if [ "$NF_" -le 20 ]; then
   pass "activity layer honours actcap"
