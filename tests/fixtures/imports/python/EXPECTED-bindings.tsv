@@ -1,0 +1,85 @@
+# Expected bindings rows for the python fixture.
+# from<TAB>line<TAB>to<TAB>local<TAB>imported<TAB>kind<TAB>conf<TAB>flags<TAB>module,
+# one per line, byte-sorted. scripts/check.sh asserts this set exactly against
+# <out>/bindings.tsv: a missing line is a binding the extractor stopped finding,
+# an extra line is one it invented. Both are regressions.
+#
+# Written from the fixture sources and the bindings spec alone, by an
+# independent oracle that never saw the extractor or its output; the two are
+# reconciled separately. `to` is pinned to the edges in EXPECTED.tsv.
+#
+# Regenerate deliberately, never reflexively - the point of the file is
+# that it does not move when the extractor changes.
+#
+# Judgement calls:
+# - app/util/winpath.py: the BOM adds no line and the CR of CRLF is not part of any name (module app.models.reading, local Settings).
+# - from-import of a submodule gives one row per name, to the submodule file; the package __init__.py edge EXPECTED.tsv also lists for M gets no row.
+# - tests/test_export.py:5 from app.util import text: namespace package, submodule lands exactly on app/util/text.py -> module, EXTRACTED.
+# - Indented imports (try/except, if TYPE_CHECKING:) are statements: rows included, incl. app/services/report.py:20 jinja2 with empty to.
+# - app/services/adapters/csv_adapter.py:24 from ....config climbs above the root: named row _Escaped/Settings, empty to/conf.
+# - tests/test_export.py:25-26 importlib.import_module() / __import__() calls are not import statements: no rows.
+# - Stdlib from-imports (__future__, typing, dataclasses, datetime, jinja2): M does not resolve, so named rows with empty to.
+app/__init__.py	3	app/config.py	Settings	Settings	named	EXTRACTED		.config
+app/config.py	8		os	*	module			os
+app/config.py	9		dataclass	dataclass	named			dataclasses
+app/main.py	3		argparse	*	module			argparse
+app/main.py	5	app/config.py	config	*	module	EXTRACTED		.
+app/main.py	6	app/services/ingest.py	ingest_readings	ingest_readings	named	EXTRACTED		.services.ingest
+app/main.py	7	app/services/report.py	render_report	render_report	named	EXTRACTED		.services.report
+app/main.py	9	app/models/reading.py	Reading	Reading	named	EXTRACTED		app.models.reading
+app/models/__init__.py	3	app/models/reading.py	Reading	Reading	named	EXTRACTED		.reading
+app/models/reading.py	1		annotations	annotations	named			__future__
+app/models/reading.py	3		dataclass	dataclass	named			dataclasses
+app/models/reading.py	4		datetime	datetime	named			datetime
+app/services/__init__.py	3	app/services/ingest.py	ingest_readings	ingest_readings	named	EXTRACTED		.ingest
+app/services/__init__.py	4	app/services/report.py	render_report	render_report	named	EXTRACTED		.report
+app/services/adapters/__init__.py	12	app/services/adapters/csv_adapter.py	csv_adapter	*	module	EXTRACTED		.
+app/services/adapters/__init__.py	12	app/services/adapters/json_adapter.py	json_adapter	*	module	EXTRACTED		.
+app/services/adapters/csv_adapter.py	10	app/config.py	Settings	Settings	named	EXTRACTED		...config
+app/services/adapters/csv_adapter.py	11	app/services/report.py	render_report	render_report	named	EXTRACTED		..report
+app/services/adapters/csv_adapter.py	16	app/models/reading.py	Reading	Reading	named	EXTRACTED		...models.reading
+app/services/adapters/csv_adapter.py	17	app/models/station.pyi	Station	Station	named	EXTRACTED		...models.station
+app/services/adapters/csv_adapter.py	24		_Escaped	Settings	named			....config
+app/services/adapters/csv_adapter.py	6		annotations	annotations	named			__future__
+app/services/adapters/csv_adapter.py	8		TYPE_CHECKING	TYPE_CHECKING	named			typing
+app/services/adapters/json_adapter.py	11		json	*	module			json
+app/services/adapters/json_adapter.py	11	app/util/reading.py	app.util.reading	*	module	EXTRACTED		app.util.reading
+app/services/adapters/json_adapter.py	13	app/models/reading.py	Reading	Reading	named	EXTRACTED		...models.reading
+app/services/adapters/json_adapter.py	9		annotations	annotations	named			__future__
+app/services/export.py	15		logging	*	module			logging
+app/services/export.py	17	app/services/ingest.py	ingest	*	module	EXTRACTED		.
+app/services/export.py	17	app/services/report.py	report	*	module	EXTRACTED		.
+app/services/export.py	18	app/models/__init__.py	models	*	module	EXTRACTED		..
+app/services/export.py	19	app/util/text.py		*	star	EXTRACTED		..util.text
+app/services/export.py	20	app/services/adapters/csv_adapter.py	csv_adapter	*	module	EXTRACTED		.adapters
+app/services/ingest.py	3		json	*	module			json
+app/services/ingest.py	5		requests	*	module			requests
+app/services/ingest.py	7	app/config.py	Settings	Settings	named	EXTRACTED		..config
+app/services/ingest.py	8	app/models/reading.py	Reading	Reading	named	EXTRACTED		..models.reading
+app/services/ingest.py	9	app/util/text.py	slugify	slugify	named	EXTRACTED		app.util.text
+app/services/report.py	20		Template	Template	named			jinja2
+app/services/report.py	22	app/util/text.py	escape_html	escape_html	named	EXTRACTED		app.util.text
+app/services/report.py	3	app/models/__init__.py	Reading	Reading	named	EXTRACTED		..models
+app/services/report.py	4	app/util/text.py	slugify	slugify	named	EXTRACTED		app.util.text
+app/util/logging.py	13		_stdlib_logging	*	module			logging
+app/util/reading.py	13	app/util/logging.py	get_logger	get_logger	named	EXTRACTED		.logging
+app/util/reading.py	14	app/models/reading.py	Reading	Reading	named	EXTRACTED		..models.reading
+app/util/text.py	7		re	*	module			re
+app/util/winpath.py	1	app/config.py	Settings	Settings	named	EXTRACTED		..config
+app/util/winpath.py	2	app/models/reading.py	app.models.reading	*	module	EXTRACTED		app.models.reading
+tests/conftest.py	1		os	*	module			os
+tests/conftest.py	1		sys	*	module			sys
+tests/conftest.py	3		pytest	*	module			pytest
+tests/conftest.py	7	app/config.py	Settings	Settings	named	EXTRACTED		app.config
+tests/test_export.py	19	app/services/ingest.py	app.services.ingest	*	module	EXTRACTED		app.services.ingest
+tests/test_export.py	2		importlib	*	module			importlib
+tests/test_export.py	4	app/models/__init__.py	app.models	*	module	EXTRACTED		app.models
+tests/test_export.py	5	app/util/text.py	text	*	module	EXTRACTED		app.util
+tests/test_export.py	7	tests/util/text.py	fake_slug	fake_slug	named	EXTRACTED		.util.text
+tests/test_export.py	9	app/services/export.py	EXPORT_SQL	EXPORT_SQL	named	EXTRACTED		app.services.export
+tests/test_export.py	9	app/services/export.py	export_rows	export_rows	named	EXTRACTED		app.services.export
+tests/test_ingest.py	10	app/services/ingest.py	app.services.ingest	*	module	EXTRACTED		app.services.ingest
+tests/test_ingest.py	11	app/models/reading.py	reading_mod	*	module	EXTRACTED		app.models.reading
+tests/test_ingest.py	13	app/util/text.py	escape_html	escape_html	named	EXTRACTED		app.util.text
+tests/test_ingest.py	13	app/util/text.py	slugify	slugify	named	EXTRACTED		app.util.text
+tests/util/__init__.py	8	tests/util/text.py	text	*	module	EXTRACTED		.

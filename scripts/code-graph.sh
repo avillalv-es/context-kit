@@ -5,6 +5,11 @@
 #
 # Writes <out>/imports.tsv    from<TAB>to<TAB>lang<TAB>form<TAB>confidence<TAB>line
 #        <out>/unresolved.tsv from<TAB>module<TAB>reason<TAB>line
+#        <out>/bindings.tsv   from<TAB>line<TAB>to<TAB>local<TAB>imported<TAB>kind<TAB>conf<TAB>flags<TAB>module
+#                              - which NAME a JS/TS or Python import statement
+#                              binds and to which resolved file (a subset of
+#                              imports.tsv's edges; empty for every other
+#                              language)
 #
 # File level, not symbol level, and that is the trade on purpose: an import
 # line changes far less often than a function body, so this stays true longer
@@ -67,6 +72,7 @@ NSRC="$(wc -l < "$TMP/src.txt" 2>/dev/null | tr -d ' ')"
 if [ "$NSRC" -eq 0 ]; then
   : > "$OUT/imports.tsv"
   : > "$OUT/unresolved.tsv"
+  : > "$OUT/bindings.tsv"
   [ "$QUIET" -eq 1 ] || printf 'code-graph: no source files under %s\n' "$ROOT" >&2
   exit 0
 fi
@@ -191,16 +197,19 @@ if [ -f composer.json ]; then
 fi
 
 : > "$TMP/unresolved.tsv"
+: > "$TMP/bindings.tsv"
 awk -f "$PLUGIN_ROOT/scripts/common.awk" -f "$PLUGIN_ROOT/scripts/code-graph.awk" \
     -v filelist="$TMP/files.txt" \
     -v root="$ROOT" \
     -v gomods="$TMP/gomods.tsv" \
     -v aliases="$TMP/aliases.tsv" \
     -v unresolved="$TMP/unresolved.tsv" \
+    -v bindings="$TMP/bindings.tsv" \
     < "$TMP/src.txt" > "$TMP/imports.tsv" 2> "$TMP/stats.txt"
 
 sort -u "$TMP/imports.tsv" > "$OUT/imports.tsv" 2>/dev/null || cp "$TMP/imports.tsv" "$OUT/imports.tsv"
 sort -u "$TMP/unresolved.tsv" > "$OUT/unresolved.tsv" 2>/dev/null || cp "$TMP/unresolved.tsv" "$OUT/unresolved.tsv"
+sort -u "$TMP/bindings.tsv" > "$OUT/bindings.tsv" 2>/dev/null || cp "$TMP/bindings.tsv" "$OUT/bindings.tsv"
 
 if [ "$QUIET" -eq 0 ]; then
   NE="$(wc -l < "$OUT/imports.tsv" | tr -d ' ')"

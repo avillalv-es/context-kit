@@ -712,6 +712,117 @@ if [ -d "$FIXROOT" ]; then
     fi
   done
   [ "$LEAK" -eq 0 ] && [ "$FAM_N" -gt 0 ] && pass "no edge resolves outside the tree it came from"
+
+  # --- 16 extension: a file saved on Windows must find the same edges as its
+  # LF twin - every awk here strips \r from lines it reads. js-ts and python
+  # only: the other families are unaffected by this commit.
+  CRLF_N=0
+  for FAM in "$FIXROOT"/*/; do
+    [ -d "$FAM" ] || continue
+    NAME="$(basename "$FAM")"
+    case "$NAME" in js-ts | python) : ;; *) continue ;; esac
+    [ -f "$FAM/EXPECTED.tsv" ] || continue
+    CRLF_N=$((CRLF_N + 1))
+    CR="$TMP/crlf-$NAME"
+    rm -rf "$CR"
+    (cd "$FAM" && find . -type f) | while IFS= read -r REL; do
+      mkdir -p "$CR/$(dirname "$REL")"
+      awk '{ sub(/\r$/, ""); printf "%s\r\n", $0 }' "$FAM/$REL" > "$CR/$REL" 2>/dev/null
+    done
+    FOUT="$TMP/fx-crlf-$NAME"
+    if ! sh scripts/code-graph.sh --root "$CR" --out "$FOUT" --quiet >/dev/null 2>&1; then
+      fail "extractor crashed on the CRLF $NAME fixture"; continue
+    fi
+    cut -f1,2 "$FOUT/imports.tsv" 2>/dev/null | sort -u > "$TMP/gotcrlf-$NAME.tsv"
+    MISSING="$(comm -23 "$TMP/exp-$NAME.tsv" "$TMP/gotcrlf-$NAME.tsv" 2>/dev/null)"
+    EXTRA="$(comm -13 "$TMP/exp-$NAME.tsv" "$TMP/gotcrlf-$NAME.tsv" 2>/dev/null)"
+    if [ -n "$MISSING" ] || [ -n "$EXTRA" ]; then
+      fail "$NAME on CRLF: edge set differs from the LF fixture"
+      printf '%s\n' "$MISSING" "$EXTRA" | grep -v '^$' | head -8 | sed 's/^/        /'
+    else
+      pass "$NAME fixture on CRLF: the same edges as the LF copy"
+    fi
+  done
+  [ "$CRLF_N" -eq 0 ] && note "no js-ts/python fixture with an EXPECTED.tsv - CRLF path untested"
+
+  # --- 16b. bindings.tsv: which name each import binds, and to which file ---
+  BIND_N=0
+  for FAM in "$FIXROOT"/*/; do
+    [ -d "$FAM" ] || continue
+    NAME="$(basename "$FAM")"
+    EXPB="$FAM/EXPECTED-bindings.tsv"
+    [ -f "$EXPB" ] || continue
+    [ -f "$TMP/fx-$NAME/bindings.tsv" ] || continue
+    BIND_N=$((BIND_N + 1))
+    sort -u "$TMP/fx-$NAME/bindings.tsv" > "$TMP/gotbind-$NAME.tsv"
+    grep -v '^#' "$EXPB" | grep -v '^[[:space:]]*$' | sort -u > "$TMP/expbind-$NAME.tsv"
+    MISSING="$(comm -23 "$TMP/expbind-$NAME.tsv" "$TMP/gotbind-$NAME.tsv" 2>/dev/null)"
+    EXTRA="$(comm -13 "$TMP/expbind-$NAME.tsv" "$TMP/gotbind-$NAME.tsv" 2>/dev/null)"
+    if [ -n "$MISSING" ]; then
+      fail "$NAME bindings: rows expected and not found:"
+      printf '%s\n' "$MISSING" | head -8 | sed 's/^/        /'
+    fi
+    if [ -n "$EXTRA" ]; then
+      fail "$NAME bindings: rows invented:"
+      printf '%s\n' "$EXTRA" | head -8 | sed 's/^/        /'
+    fi
+    [ -z "$MISSING" ] && [ -z "$EXTRA" ] && pass "$NAME bindings: every expected row, and no invented ones"
+  done
+  [ "$BIND_N" -eq 0 ] && note "no fixture family has an EXPECTED-bindings.tsv yet - bindings.tsv untested against an oracle"
+
+  # Every CRLF copy's bindings must match the LF run (order aside).
+  for NAME in js-ts python; do
+    [ -f "$TMP/fx-$NAME/bindings.tsv" ] || continue
+    [ -f "$TMP/fx-crlf-$NAME/bindings.tsv" ] || continue
+    sort -u "$TMP/fx-$NAME/bindings.tsv" > "$TMP/lfbind-$NAME.tsv"
+    sort -u "$TMP/fx-crlf-$NAME/bindings.tsv" > "$TMP/crlfbind-$NAME.tsv"
+    if diff "$TMP/lfbind-$NAME.tsv" "$TMP/crlfbind-$NAME.tsv" >/dev/null 2>&1; then
+      pass "$NAME bindings on CRLF: identical to the LF run"
+    else
+      fail "$NAME bindings on CRLF: differs from the LF run"
+    fi
+  done
+
+  # Bindings are a SUBSET of the import graph, never a second resolver: every
+  # row with a non-empty `to` must have that (from,to) edge in imports.tsv.
+  SUBSET_FAIL=0
+  SUBSET_N=0
+  for FAM in "$FIXROOT"/*/; do
+    [ -d "$FAM" ] || continue
+    NAME="$(basename "$FAM")"
+    [ -s "$TMP/fx-$NAME/bindings.tsv" ] || continue
+    SUBSET_N=$((SUBSET_N + 1))
+    awk -F'\t' '$3 != "" { print $1 "\t" $3 }' "$TMP/fx-$NAME/bindings.tsv" | sort -u > "$TMP/bindedges-$NAME.tsv"
+    ORPHAN="$(comm -23 "$TMP/bindedges-$NAME.tsv" "$TMP/got-$NAME.tsv" 2>/dev/null)"
+    if [ -n "$ORPHAN" ]; then
+      fail "$NAME: bindings row(s) with no matching imports.tsv edge:"
+      printf '%s\n' "$ORPHAN" | head -8 | sed 's/^/        /'
+      SUBSET_FAIL=1
+    fi
+  done
+  [ "$SUBSET_FAIL" -eq 0 ] && [ "$SUBSET_N" -gt 0 ] && pass "every bindings row's (from,to) is an edge in imports.tsv"
+
+  # --- 16c. a Python NAMED binding is not ALSO an unresolved.tsv drop for the
+  # joined name M.X (MX when M ends in "."): the fix removes that row, not
+  # both, and it removes it only for that one name.
+  C16C_FAIL=0
+  for NAME in js-ts python; do
+    [ -f "$TMP/fx-$NAME/bindings.tsv" ] || continue
+    [ -f "$TMP/fx-$NAME/unresolved.tsv" ] || continue
+    BAD="$(awk -F'\t' '
+      FNR == NR { seen[$1 SUBSEP $2] = 1; next }
+      $6 == "named" {
+        joined = ($9 ~ /\.$/) ? $9 $5 : $9 "." $5
+        if (($1 SUBSEP joined) in seen) print $1 "\t" joined
+      }
+    ' "$TMP/fx-$NAME/unresolved.tsv" "$TMP/fx-$NAME/bindings.tsv")"
+    if [ -n "$BAD" ]; then
+      fail "$NAME: unresolved.tsv still drops a name bindings.tsv already binds:"
+      printf '%s\n' "$BAD" | head -8 | sed 's/^/        /'
+      C16C_FAIL=1
+    fi
+  done
+  [ "$C16C_FAIL" -eq 0 ] && pass "unresolved.tsv drops no name that bindings.tsv already binds"
 fi
 
 # --- 17. blast-radius walks importers, not imports -------------------------

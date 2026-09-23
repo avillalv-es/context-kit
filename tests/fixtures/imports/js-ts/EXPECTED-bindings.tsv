@@ -1,0 +1,95 @@
+# Expected bindings rows for the js-ts fixture.
+# from<TAB>line<TAB>to<TAB>local<TAB>imported<TAB>kind<TAB>conf<TAB>flags<TAB>module,
+# one per line, byte-sorted. scripts/check.sh asserts this set exactly against
+# <out>/bindings.tsv: a missing line is a binding the extractor stopped finding,
+# an extra line is one it invented. Both are regressions.
+#
+# Written from the fixture sources and the bindings spec alone, by an
+# independent oracle that never saw the extractor or its output; the two are
+# reconciled separately. `to` is pinned to the edges in EXPECTED.tsv.
+#
+# Regenerate deliberately, never reflexively - the point of the file is
+# that it does not move when the extractor changes.
+#
+# Judgement calls:
+# - scripts/build.mjs:5 import attributes (with { type: "json" }) are ignored; pkg is a plain default binding.
+# - scripts/build.mjs:23,25 import.meta.url is not an import: no row.
+# - src/app.tsx:26 multi-line await import( with the specifier on line 27: line is 26, the line holding import(.
+# - src/util.ts:3 import util from "util": no EXPECTED.tsv edge (bare builtin; via src/ it would be itself), so to/conf empty.
+# - src/esm/native.cts:5 and src/legacy/loader.cjs:19 require.resolve(...): no row, although native.cts->loader.cjs is an edge.
+# - src/legacy/loader.cjs:20 return require("./config.cjs") is an unbound require: its own row beside the bound one on line 4.
+# - src/lib/index.ts:9 export * from "react": reexport-star row with empty to/conf.
+# - src/types/globals.d.ts declare module "..." blocks are declarations, not imports: no rows.
+# - alias flag (added with the spec's fourth flag) on src/app.tsx:7, src/app.tsx:8, src/components/Button.tsx:3, src/esm/wrapper.mts:1, src/index.ts:6, src/util.ts:4; alias specifiers that do not resolve (src/esm/wrapper.mts:7, src/util.ts:7) have empty to, so no alias.
+scripts/build.mjs	15	src/esm/wrapper.mts	wrapped	wrapped	named	EXTRACTED	dynamic	../src/esm/wrapper.mjs
+scripts/build.mjs	16	src/lib/dual.js	DUAL	DUAL	named	EXTRACTED	dynamic	../src/lib/dual.js
+scripts/build.mjs	4		mkdir	mkdir	named			node:fs/promises
+scripts/build.mjs	4		writeFile	writeFile	named			node:fs/promises
+scripts/build.mjs	5	package.json	pkg	default	default	EXTRACTED		../package.json
+scripts/build.mjs	6	src/lib/constants.ts	VERSION	VERSION	named	EXTRACTED		../src/lib/constants.ts
+scripts/build.mjs	7		shared	shared	named			../../shared/tooling.mjs
+src/app.tsx	1		useCallback	useCallback	named			react
+src/app.tsx	1		useState	useState	named			react
+src/app.tsx	10	src/app.css			side-effect	EXTRACTED		./app.css
+src/app.tsx	25	src/lib/format.ts	mod	*	module	EXTRACTED	dynamic	./lib/format
+src/app.tsx	26	src/features/detail/model.ts	lazy	*	module	EXTRACTED	dynamic	./features/detail/model
+src/app.tsx	5	src/components/Button.tsx	Button	Button	named	EXTRACTED		./components/Button
+src/app.tsx	6	src/hooks/useData.ts	useData	useData	named	EXTRACTED		./hooks/useData.js
+src/app.tsx	7	src/lib/index.ts	format	format	named	INFERRED	alias	@lib
+src/app.tsx	8	src/config/settings.ts	settings	settings	named	INFERRED	alias	#config
+src/app.tsx	9	src/widgets/Card.jsx	CARD_KIND	CARD_KIND	named	EXTRACTED		./widgets/Card
+src/app.tsx	9	src/widgets/Card.jsx	Card	default	default	EXTRACTED		./widgets/Card
+src/components/Button.tsx	1		clsx	default	default			clsx
+src/components/Button.tsx	2	src/lib/format.ts	Formatted	Formatted	named	EXTRACTED	type	../lib/format
+src/components/Button.tsx	3	src/lib/constants.ts	LABELS	LABELS	named	INFERRED	alias	@app/lib/constants
+src/components/Button.tsx	6		scoped	default	default			@vendor/clsx
+src/components/Button.tsx	7	src/widgets/Card.jsx	Card	default	default	EXTRACTED		../widgets/Card.jsx
+src/esm/native.cts	1	src/legacy/config.cjs	cfg	*	module	EXTRACTED	cjs	../legacy/config.cjs
+src/esm/wrapper.mts	1	src/lib/format.ts	format	format	named	INFERRED	alias	@local/format
+src/esm/wrapper.mts	10		VERSION	VERSION	named			../Lib/constants
+src/esm/wrapper.mts	2	src/esm/native.cts	NATIVE	NATIVE	named	EXTRACTED		./native.cjs
+src/esm/wrapper.mts	3		util	default	default			node:util
+src/esm/wrapper.mts	7		LABELS	LABELS	named			@lib
+src/features/detail/model.ts	5	src/lib/format.ts	Formatted	Formatted	named	EXTRACTED	type	../../lib/format
+src/features/detail/model.ts	6	src/features/detail/view.tsx	DetailView	DetailView	named	EXTRACTED		./view
+src/features/detail/view.tsx	1	src/components/Button.tsx	Button	Button	named	EXTRACTED		../../components/Button
+src/features/detail/view.tsx	2	src/features/detail/model.ts	detailModel	detailModel	named	EXTRACTED		./model
+src/features/detail/view.tsx	3	src/types/models.d.ts	Model	Model	named	EXTRACTED	type	../../types/models
+src/features/detail/view.tsx	4	src/lib/dual.ts	DUAL	DUAL	named	EXTRACTED		../../lib/dual
+src/hooks/useData.ts	1		useEffect	useEffect	named			react
+src/hooks/useData.ts	1		useState	useState	named			react
+src/hooks/useData.ts	2	src/lib/index.ts	VERSION	VERSION	named	EXTRACTED		../lib
+src/hooks/useData.ts	2	src/lib/index.ts	format	format	named	EXTRACTED		../lib
+src/hooks/useData.ts	6	src/hooks/constants.ts	HOOK_LIMIT	HOOK_LIMIT	named	EXTRACTED		./constants
+src/hooks/useData.ts	7	src/lib/constants.ts	LIB_VERSION	VERSION	named	EXTRACTED		../lib/constants
+src/hooks/useData.ts	8	src/types/models.d.ts	models	*	namespace	EXTRACTED		../types/models
+src/index.ts	11	src/lib/index.ts		*	reexport-star	EXTRACTED		./lib
+src/index.ts	12	src/features/detail/view.tsx	detail	*	reexport-namespace	EXTRACTED		./features/detail/view
+src/index.ts	13	src/types/models.d.ts	Model	Model	reexport	EXTRACTED	type	./types/models
+src/index.ts	4		React	default	default			react
+src/index.ts	5	src/app.tsx	App	App	named	EXTRACTED		./app
+src/index.ts	6	src/lib/constants.ts	VERSION	VERSION	named	INFERRED	alias	@app/lib/constants
+src/index.ts	7	src/util.ts	UTIL_NAME	UTIL_NAME	named	EXTRACTED		./util
+src/index.ts	8	src/util/index.ts	helper	helper	named	EXTRACTED		./util/index
+src/index.ts	9	src/polyfill.ts			side-effect	EXTRACTED		./polyfill
+src/legacy/loader.cjs	20	src/legacy/config.cjs		*	module	EXTRACTED	cjs	./config.cjs
+src/legacy/loader.cjs	3		path	*	module		cjs	node:path
+src/legacy/loader.cjs	4	src/legacy/config.cjs	config	*	module	EXTRACTED	cjs	./config.cjs
+src/legacy/loader.cjs	5		clsx	*	module		cjs	clsx
+src/legacy/loader.cjs	6	src/lib/dual.js	dual	*	module	EXTRACTED	cjs	../lib/dual.js
+src/lib/index.ts	2	src/lib/format.ts		*	reexport-star	EXTRACTED		./format
+src/lib/index.ts	3	src/lib/constants.ts	LABELS	LABELS	reexport	EXTRACTED		./constants
+src/lib/index.ts	3	src/lib/constants.ts	VERSION	VERSION	reexport	EXTRACTED		./constants
+src/lib/index.ts	4	src/lib/legacyish.js	LEGACYISH	LEGACYISH	reexport	EXTRACTED		./legacyish.js
+src/lib/index.ts	5	src/lib/dual.ts	DUAL	DUAL	reexport	EXTRACTED		./dual
+src/lib/index.ts	6	src/lib/format.ts	slugify	slug	reexport	EXTRACTED		./format
+src/lib/index.ts	9			*	reexport-star			react
+src/types/models.d.ts	2	src/lib/format.ts	Formatted	Formatted	named	EXTRACTED	type	../lib/format
+src/util.ts	3		util	default	default			util
+src/util.ts	4	src/lib/format.ts	format	format	named	INFERRED	alias	@shared/format
+src/util.ts	7		nothing	nothing	named			@shared/nowhere
+src/util/index.ts	2	src/vendor/clsx.ts	vendorClsx	default	reexport	EXTRACTED		../vendor/clsx
+src/widgets/Card.jsx	1		clsx	default	default			clsx
+src/widgets/Card.jsx	2	src/lib/format.ts	format	format	named	EXTRACTED		../lib/format
+src/widgets/Card.jsx	3	src/vendor/clsx.ts	vendor	*	namespace	EXTRACTED		../vendor/clsx
+src/widgets/Card.jsx	3	src/vendor/clsx.ts	vendorClsx	default	default	EXTRACTED		../vendor/clsx

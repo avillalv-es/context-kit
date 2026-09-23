@@ -6,6 +6,10 @@
 # -v gomod=       the module path from go.mod, if any
 # -v aliases=     optional "prefix<TAB>target" lines from tsconfig/jsconfig paths
 # -v unresolved=  optional path to write dropped imports to
+# -v bindings=    optional path to write import-binding rows to (JS/TS and
+#                 Python only): from,line,to,local,imported,kind,conf,flags,
+#                 module - which NAME a statement binds and to which resolved
+#                 file, a subset of the edges below, never a second resolver
 # -v maxfan=      cap on edges from one import statement (default 40)
 #
 # stdout: from<TAB>to<TAB>lang<TAB>form<TAB>confidence<TAB>line
@@ -107,8 +111,9 @@ function drop(from, mod, reason, lno) {
 }
 
 # --- per-language resolution -------------------------------------------------
-function resolve(from, lang, mod, form, lno,   d, i, n, P, base, hit, up, rest, seg, nseg, key, croot) {
+function resolve(from, lang, mod, form, lno,   d, i, n, P, base, hit, up, rest, seg, nseg, key, croot, conf) {
   ambiguous = 0
+  bindto = ""; bindconf = ""; bindalias = 0
   d = dirname(from)
 
   if (lang == "js") {
@@ -116,12 +121,12 @@ function resolve(from, lang, mod, form, lno,   d, i, n, P, base, hit, up, rest, 
       base = norm(d "/" mod)
       if (base == "") { drop(from, mod, "climbs-above-root", lno); return }
       hit = try_path_js(base)
-      if (hit != "") { emit(from, hit, lang, form, "EXTRACTED", lno); return }
+      if (hit != "") { setbind(from, hit, "EXTRACTED", 0); emit(from, hit, lang, form, "EXTRACTED", lno); return }
       drop(from, mod, "relative-path-has-no-file", lno); return
     }
     if (mod ~ /^\//) {
       hit = try_path_js(norm(mod))
-      if (hit != "") { emit(from, hit, lang, form, "EXTRACTED", lno); return }
+      if (hit != "") { setbind(from, hit, "EXTRACTED", 0); emit(from, hit, lang, form, "EXTRACTED", lno); return }
     }
     # The nearest self-contained config shadows the outer ones. A package
     # tsconfig that declares paths and extends nothing does not inherit the
@@ -149,35 +154,39 @@ function resolve(from, lang, mod, form, lno,   d, i, n, P, base, hit, up, rest, 
       hit = try_path_js(norm(base))
       if (hit != "") { bestlen = L; best = i; besthit = hit }
     }
-    if (best > 0) { emit(from, besthit, lang, form, "INFERRED", lno); return }
+    if (best > 0) { setbind(from, besthit, "INFERRED", 1); emit(from, besthit, lang, form, "INFERRED", lno); return }
     # baseUrl-style bare specifier that is really an internal path.
     if (index(mod, "node:") == 1) { drop(from, mod, "stdlib", lno); return }
     hit = try_path_js(norm(mod))
     if (hit == "") hit = try_path_js(norm("src/" mod))
-    if (hit != "") { emit(from, hit, lang, form, "INFERRED", lno); return }
+    if (hit != "") { setbind(from, hit, "INFERRED", 0); emit(from, hit, lang, form, "INFERRED", lno); return }
     drop(from, mod, "external-package", lno); return
   }
 
   if (lang == "py") {
+    # A name that does not resolve as a submodule (form "from-import-
+    # submodule") is a binding, not a drop - the §16c fix. The drop for M
+    # itself (any other form using this same relative/absolute resolution)
+    # still gets written below.
     if (mod ~ /^\./) {
       up = 0
       while (substr(mod, up + 1, 1) == ".") up++
       rest = substr(mod, up + 1)
       base = d
       for (i = 2; i <= up; i++) {
-        if (base == "") { drop(from, mod, "climbs-above-package", lno); return }
+        if (base == "") { if (form != "from-import-submodule") drop(from, mod, "climbs-above-package", lno); return }
         base = dirname(base)
       }
       # Landing ON the repo root means the climb went one level past the
       # top-level package - Python raises for this. Resolving it anyway lands
       # on whatever decoy happens to sit at the root.
-      if (base == "" && up > 1) { drop(from, mod, "climbs-above-package", lno); return }
+      if (base == "" && up > 1) { if (form != "from-import-submodule") drop(from, mod, "climbs-above-package", lno); return }
       gsub(/\./, "/", rest)
       base = norm(base (rest == "" ? "" : "/" rest))
-      if (base == "") { drop(from, mod, "climbs-above-root", lno); return }
+      if (base == "") { if (form != "from-import-submodule") drop(from, mod, "climbs-above-root", lno); return }
       hit = try_path(base, "py")
-      if (hit != "") { emit(from, hit, lang, form, "EXTRACTED", lno); return }
-      drop(from, mod, "relative-path-has-no-file", lno); return
+      if (hit != "") { setbind(from, hit, "EXTRACTED", 0); emit(from, hit, lang, form, "EXTRACTED", lno); return }
+      if (form != "from-import-submodule") drop(from, mod, "relative-path-has-no-file", lno); return
     }
     base = mod
     gsub(/\./, "/", base)
@@ -187,8 +196,13 @@ function resolve(from, lang, mod, form, lno,   d, i, n, P, base, hit, up, rest, 
     # logging` is the stdlib, and a repo with any logging.py in it would
     # otherwise acquire an edge to it from every file in the tree.
     if (hit == "" && index(base, "/") > 0) hit = try_suffix(base, "py")
-    if (hit != "") { emit(from, hit, lang, form, (hit == base ".py" || hit == base "/__init__.py") ? "EXTRACTED" : "INFERRED", lno); return }
-    drop(from, mod, (ambiguous ? "ambiguous-name" : "external-or-stdlib"), lno); return
+    if (hit != "") {
+      conf = (hit == base ".py" || hit == base "/__init__.py") ? "EXTRACTED" : "INFERRED"
+      setbind(from, hit, conf, 0)
+      emit(from, hit, lang, form, conf, lno); return
+    }
+    if (form != "from-import-submodule") drop(from, mod, (ambiguous ? "ambiguous-name" : "external-or-stdlib"), lno)
+    return
   }
 
   if (lang == "go") {
@@ -402,38 +416,258 @@ function grab(line, re, lead, trail,   s) {
   return s
 }
 
+# --- bindings.tsv: which name an import binds, and to which resolved file --
+# resolve() sets bindto/bindconf/bindalias below on every JS/TS or Python call
+# it handles (regardless of whether emit() itself dedups the edge, since
+# emit() returning early is exactly what would otherwise hide the target from
+# the caller). setbind() is the one place that decides a candidate counts: a
+# self-edge (hit == from) is never emitted by emit() either, so recording one
+# here would leave a bindings row with no matching imports.tsv edge - the one
+# invariant bindings.tsv promises never to break.
+function setbind(f, t, conf, alias) {
+  if (t != "" && t != f) { bindto = t; bindconf = conf; bindalias = alias }
+  else { bindto = ""; bindconf = ""; bindalias = 0 }
+}
+
+function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+
+# Comma-joined subset of type,dynamic,cjs,alias, always in that order.
+function mkflags(tf, dy, cj, al,   out) {
+  out = ""
+  if (tf) out = "type"
+  if (dy) out = out (out == "" ? "" : ",") "dynamic"
+  if (cj) out = out (out == "" ? "" : ",") "cjs"
+  if (al) out = out (out == "" ? "" : ",") "alias"
+  return out
+}
+
+function bindrow(bfrom, bline, bto, blocal, bimported, bkind, bconf, bflags, bmodule) {
+  if (bindings == "") return
+  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", bfrom, bline, bto, blocal, bimported, bkind, bconf, bflags, bmodule >> bindings
+}
+
+# The last starting position of literal (non-regex) `t` in `s`, or 0. Used to
+# find which of two keywords sits closer to the end of a string - no lookahead
+# in POSIX ERE, so this is done without one.
+function lastindex(s, t,   p, r, i) {
+  r = 0; i = 1
+  while ((p = index(substr(s, i), t)) > 0) {
+    r = i + p - 1
+    i = r + length(t)
+  }
+  return r
+}
+
+# Which of "import"/"export" sits closer to the end of `s` (a prefix with no
+# quotes in it, so no other candidate can hide behind one), and its position
+# in the global `kwpos` - together they say where the clause that actually
+# owns the upcoming `from` begins.
+function js_lastkw(s,   pi, pe) {
+  pi = lastindex(s, "import")
+  pe = lastindex(s, "export")
+  if (pi == 0 && pe == 0) { kwpos = 0; return "" }
+  if (pi > pe) { kwpos = pi; return "import" }
+  kwpos = pe; return "export"
+}
+
+# Which PHYSICAL line a character position in the current (possibly joined)
+# `code` came from. Position 1 is not always on the line the join started on:
+# in the trap ("export const a = 1" glues onto the next line's real import,
+# see js_lastkw()'s caller), the keyword js_lastkw() finds sits on whichever
+# later line actually holds it, and that line - not the join's start - is
+# what a bindings row must report.
+function js_lineof(pos,   i, cum) {
+  cum = 0
+  for (i = 1; i <= pcount; i++) {
+    cum += plen[i]
+    if (pos <= cum) return pline[i]
+    cum += 1
+  }
+  return pline[pcount]
+}
+
+# One Python `from M import a, b as c[, ...]` name list, already joined to a
+# single logical line (the parenthesised and backslash-continued forms both
+# land here once their names are on one string). mto/mconf are M's OWN
+# resolution (the "from-import" edge); a name that resolves as a submodule of
+# M is a MODULE binding to that submodule, one that does not is a NAMED
+# binding to M's file - the §16c fix: unresolved.tsv keeps the drop for M
+# itself but not one more for every name that is not a submodule.
+function py_submodule_names(bfrom, lno, bline, mbase, mto, mconf, namestext,
+                             nn, NP, i, raw, impname, aliasname) {
+  nn = split(namestext, NP, /,/)
+  for (i = 1; i <= nn; i++) {
+    raw = trim(NP[i])
+    if (raw == "") continue
+    if (raw == "*") { bindrow(bfrom, bline, mto, "", "*", "star", mconf, "", mbase); continue }
+    impname = raw
+    sub(/[ \t]+as[ \t]+.*$/, "", impname)
+    gsub(/[ \t]/, "", impname)
+    if (impname == "" || impname == "*") continue
+    aliasname = impname
+    if (raw ~ /[ \t]+as[ \t]+/) { aliasname = raw; sub(/^.*[ \t]+as[ \t]+/, "", aliasname); gsub(/[ \t]/, "", aliasname) }
+    resolve(bfrom, "py", mbase (mbase ~ /\.$/ ? "" : ".") impname, "from-import-submodule", lno)
+    if (bindto != "") bindrow(bfrom, bline, bindto, aliasname, "*", "module", bindconf, "", mbase)
+    else bindrow(bfrom, bline, mto, aliasname, impname, "named", mconf, "", mbase)
+  }
+}
+
+# Strip a clause-wide `type` prefix (`import type {...}`, `import type D`),
+# leaving `type` alone as an actual default-import name (`import type from
+# 'm'`) since then nothing follows it. Sets the global `typeall`.
+function strip_typeall(clause,   save) {
+  typeall = 0
+  save = clause
+  if (clause ~ /^type[ \t]+/) {
+    sub(/^type[ \t]+/, "", clause)
+    if (clause == "") clause = save
+    else typeall = 1
+  }
+  return clause
+}
+
+# The text of a JS/TS import/export clause between the keyword and `from`:
+# a default name, a `{ ... }` group, a `* as ns`, or a combination. Reads
+# bindto/bindconf/bindalias, already set by the resolve() call for this same
+# statement's module, and writes every name the clause binds.
+function js_bind_clause(bfrom, bline, clause, reexport, modtext,
+                         dpart, bpart, rest, ns, hasas, nb, EP, i, raw, tf,
+                         impname, aliasname, kind) {
+  clause = trim(strip_typeall(trim(clause)))
+  if (clause == "") return
+
+  if (index(clause, "{") > 0) {
+    dpart = clause
+    sub(/\{.*$/, "", dpart)
+    gsub(/[ \t,]+$/, "", dpart)
+    bpart = clause
+    sub(/^[^{]*\{/, "", bpart)
+    sub(/\}.*$/, "", bpart)
+  } else if (index(clause, "*") > 0) {
+    dpart = clause
+    sub(/\*.*$/, "", dpart)
+    gsub(/[ \t,]+$/, "", dpart)
+    bpart = ""
+    rest = clause
+    sub(/^[^*]*\*/, "", rest)
+    hasas = 0
+    if (match(rest, /^[ \t]*as[ \t]+[A-Za-z_$][A-Za-z0-9_$]*/)) {
+      hasas = 1
+      ns = substr(rest, RSTART, RLENGTH)
+      sub(/^[ \t]*as[ \t]+/, "", ns)
+    }
+    if (hasas)
+      bindrow(bfrom, bline, bindto, ns, "*", (reexport ? "reexport-namespace" : "namespace"), bindconf, mkflags(typeall, 0, 0, bindalias), modtext)
+    else if (reexport)
+      bindrow(bfrom, bline, bindto, "", "*", "reexport-star", bindconf, mkflags(typeall, 0, 0, bindalias), modtext)
+  } else {
+    dpart = clause
+    bpart = ""
+  }
+
+  if (dpart != "" && !reexport)
+    bindrow(bfrom, bline, bindto, dpart, "default", "default", bindconf, mkflags(typeall, 0, 0, bindalias), modtext)
+
+  if (bpart != "") {
+    nb = split(bpart, EP, /,/)
+    for (i = 1; i <= nb; i++) {
+      raw = trim(EP[i])
+      if (raw == "") continue
+      tf = typeall
+      if (!tf && raw ~ /^type[ \t]+/) { tf = 1; sub(/^type[ \t]+/, "", raw); raw = trim(raw) }
+      impname = raw
+      sub(/[ \t]+as[ \t]+.*$/, "", impname)
+      gsub(/[ \t]/, "", impname)
+      if (impname == "") continue
+      aliasname = impname
+      if (raw ~ /[ \t]+as[ \t]+/) { aliasname = raw; sub(/^.*[ \t]+as[ \t]+/, "", aliasname); gsub(/[ \t]/, "", aliasname) }
+      kind = reexport ? "reexport" : (impname == "default" ? "default" : "named")
+      bindrow(bfrom, bline, bindto, aliasname, impname, kind, bindconf, mkflags(tf, 0, 0, bindalias), modtext)
+    }
+  }
+}
+
+# What a require()/import() call's return value is bound to, read from the
+# code immediately BEFORE the call on the same statement (anchored at the end,
+# so a trap glued onto the front of the same buffer - two statements joined by
+# a missing semicolon - cannot fool it: only the tail immediately before the
+# call matters). flavor is "cjs" or "dynamic", it becomes the row's flag.
+function js_bind_call(bfrom, bline, head, flavor, modtext,
+                       t, local2, destr, n, EP, i, raw, key, val) {
+  t = head
+  # TS import-equals: `import x = require(...)`.
+  if (flavor == "cjs" && match(t, /import[ \t]+[A-Za-z_$][A-Za-z0-9_$]*[ \t]*=[ \t]*$/)) {
+    local2 = substr(t, RSTART, RLENGTH)
+    sub(/^import[ \t]+/, "", local2); sub(/[ \t]*=[ \t]*$/, "", local2)
+    bindrow(bfrom, bline, bindto, local2, "*", "module", bindconf, mkflags(0, flavor == "dynamic", flavor == "cjs", bindalias), modtext)
+    return
+  }
+  if (match(t, /(const|let|var)[ \t]+[A-Za-z_$][A-Za-z0-9_$]*[ \t]*=[ \t]*(await[ \t]+)?[ \t]*$/)) {
+    local2 = substr(t, RSTART, RLENGTH)
+    sub(/^(const|let|var)[ \t]+/, "", local2)
+    sub(/[ \t]*=.*$/, "", local2)
+    bindrow(bfrom, bline, bindto, local2, "*", "module", bindconf, mkflags(0, flavor == "dynamic", flavor == "cjs", bindalias), modtext)
+    return
+  }
+  if (match(t, /(const|let|var)[ \t]*\{[^}]*\}[ \t]*=[ \t]*(await[ \t]+)?[ \t]*$/)) {
+    destr = substr(t, RSTART, RLENGTH)
+    sub(/^[^{]*\{/, "", destr); sub(/\}.*$/, "", destr)
+    n = split(destr, EP, /,/)
+    for (i = 1; i <= n; i++) {
+      raw = trim(EP[i])
+      if (raw == "") continue
+      key = raw; val = raw
+      if (raw ~ /:/) { sub(/:.*$/, "", key); sub(/^[^:]*:/, "", val) }
+      gsub(/[ \t]/, "", key); gsub(/[ \t]/, "", val)
+      if (key == "") continue
+      bindrow(bfrom, bline, bindto, val, key, "named", bindconf, mkflags(0, flavor == "dynamic", flavor == "cjs", bindalias), modtext)
+    }
+    return
+  }
+  bindrow(bfrom, bline, bindto, "", "*", "module", bindconf, mkflags(0, flavor == "dynamic", flavor == "cjs", bindalias), modtext)
+}
+
 # One Python import statement. Split out so a line carrying several of them,
-# separated by semicolons, can be handled one at a time.
-function py_stmt(from, code, lno,   m, names, nn, NP, i, n, P, s) {
+# separated by semicolons, can be handled one at a time. `bline` is the line
+# bindings.tsv reports for this statement - the same as `lno` here, since
+# py_stmt only ever runs on a single already-complete logical line; the
+# parenthesised and backslash-continued forms are assembled in scan() instead
+# and call py_submodule_names() directly with their own remembered start line.
+function py_stmt(from, code, lno, bline,   m, names, mto, mconf, n, P, i, raw, impname, aliasname) {
   if (code ~ /^[ \t]*from[ \t]+[.A-Za-z_]/) {
     m = code
     sub(/^[ \t]*from[ \t]+/, "", m)
     names = m
     sub(/[ \t].*$/, "", m)
-    if (m != "") resolve(from, "py", m, "from-import", lno)
+    mto = ""; mconf = ""
+    if (m != "") { resolve(from, "py", m, "from-import", lno); mto = bindto; mconf = bindconf }
     # `from . import ingest, report` names submodules. The package edge is
     # real too - importing it runs __init__ - so both are emitted.
     if (names ~ /[ \t]import[ \t]/) {
       sub(/^[^ \t]*[ \t]+import[ \t]+/, "", names)
       sub(/#.*$/, "", names); gsub(/[()]/, "", names)
-      nn = split(names, NP, /[ \t]*,[ \t]*/)
-      for (i = 1; i <= nn; i++) {
-        sub(/[ \t]+as[ \t]+.*$/, "", NP[i])
-        gsub(/[ \t]/, "", NP[i])
-        if (NP[i] == "" || NP[i] == "*") continue
-        resolve(from, "py", m (m ~ /\.$/ ? "" : ".") NP[i], "from-import-submodule", lno)
-      }
+      py_submodule_names(from, lno, bline, m, mto, mconf, names)
     }
     return
   }
   if (code ~ /^[ \t]*import[ \t]+[A-Za-z_.]/) {
     m = code
     sub(/^[ \t]*import[ \t]+/, "", m)
-    sub(/[ \t]+as[ \t].*$/, "", m)
-    n = split(m, P, /[ \t]*,[ \t]*/)
+    # `import a as b, c` - split on commas FIRST, then strip ` as NAME` per
+    # element (and keep the alias as `local`): stripping the whole tail at
+    # "as" before splitting throws away every name after the aliased one.
+    n = split(m, P, /,/)
     for (i = 1; i <= n; i++) {
-      s = P[i]; gsub(/[ \t]/, "", s)
-      if (s != "") resolve(from, "py", s, "import", lno)
+      raw = trim(P[i])
+      if (raw == "") continue
+      impname = raw
+      sub(/[ \t]+as[ \t]+.*$/, "", impname)
+      gsub(/[ \t]/, "", impname)
+      if (impname == "") continue
+      aliasname = impname
+      if (raw ~ /[ \t]+as[ \t]+/) { aliasname = raw; sub(/^.*[ \t]+as[ \t]+/, "", aliasname); gsub(/[ \t]/, "", aliasname) }
+      resolve(from, "py", impname, "import", lno)
+      bindrow(from, bline, bindto, aliasname, "*", "module", bindconf, "", impname)
     }
   }
 }
@@ -442,7 +676,7 @@ function scan(from,   lang, line, lno, full, code, m, pend, i) {
   lang = lang_of(extof(from))
   if (lang == "") return
   full = (from ~ /^\//) ? from : root "/" from
-  blockstate = 0; blockq = ""; ingo = 0; prevjvm = ""; pyopen = ""
+  blockstate = 0; blockq = ""; ingo = 0; prevjvm = ""; pyopen = ""; pcount = 0
   lno = 0
   pend = ""
   while ((getline line < full) > 0) {
@@ -462,24 +696,53 @@ function scan(from,   lang, line, lno, full, code, m, pend, i) {
     }
     code = decomment(line, lang)
     if (code ~ /^[ \t]*$/) continue
+    rawcode = code
 
     # An import statement split across lines: join until the specifier lands.
+    # `stmtline` is the line bindings.tsv reports for whatever statement is
+    # current: the line this join STARTED on, remembered across every line it
+    # takes to land, never the line it happens to finish on. pline[]/plen[]
+    # remember where each joined-in physical line begins and how long its own
+    # (pre-join) code was, so js_lineof() can map a position back to ITS
+    # physical line - not every position in a joined buffer is on the line
+    # the join started on: see js_lineof()'s own comment for why that matters.
+    joined = 0
     if (pend != "") {
       pad = sprintf("%" (length(pend) + 1) "s", "")
       gsub(/ /, ".", pad)
       strmask = pad strmask
       code = pend " " code
       pend = ""
+      joined = 1
     }
+    if (!joined) { stmtline = lno; pcount = 0 }
+    pcount++; pline[pcount] = lno; plen[pcount] = length(rawcode)
 
     if (lang == "js") {
       if (code ~ /^[ \t]*(import|export)[ \t]/ && code !~ /['"]/ && code !~ /;[ \t]*$/) { pend = code; continue }
       # `await import(` with the specifier on the following line.
       if (code ~ /import[ \t]*\([ \t]*$/) { pend = code; continue }
       m = grab(code, "^[ \t]*(import|export)[^'\"]*from[ \t]*['\"][^'\"]+['\"]", 0, 0)
-      if (m != "") { sub(/^[^'"]*['"]/, "", m); sub(/['"]$/, "", m); resolve(from, lang, m, "import", lno); }
+      if (m != "") {
+        fullmatch = m
+        sub(/^[^'"]*['"]/, "", m); sub(/['"]$/, "", m)
+        resolve(from, lang, m, "import", lno)
+        # Find the clause's OWN keyword, not necessarily the line's first one:
+        # a joined buffer can hold two statements (`export const a = 1` has no
+        # quote and no semicolon, so it starts a pend too, and the next line's
+        # real import lands glued onto its tail) - the keyword closest to
+        # `from` is the one that owns this clause.
+        head = fullmatch
+        sub(/from[ \t]*['"][^'"]*['"][ \t]*$/, "", head)
+        kw = js_lastkw(head)
+        if (kw != "") js_bind_clause(from, js_lineof(kwpos), substr(head, kwpos + length(kw)), (kw == "export") ? 1 : 0, m)
+      }
       m = grab(code, "^[ \t]*import[ \t]*['\"][^'\"]+['\"]", 0, 0)
-      if (m != "") { sub(/^[^'"]*['"]/, "", m); sub(/['"]$/, "", m); resolve(from, lang, m, "import-side-effect", lno); }
+      if (m != "") {
+        sub(/^[^'"]*['"]/, "", m); sub(/['"]$/, "", m)
+        resolve(from, lang, m, "import-side-effect", lno)
+        bindrow(from, stmtline, bindto, "", "", "side-effect", bindconf, mkflags(0, 0, 0, bindalias), m)
+      }
       # require(...) and import(...) are not anchored to the start of a line,
       # so they can and do appear inside template literals and quoted strings.
       # The mask says whether this occurrence is code.
@@ -487,11 +750,14 @@ function scan(from,   lang, line, lno, full, code, m, pend, i) {
       while (match(rest, /require[ \t]*\([ \t]*['"][^'"]+['"]/)) {
         m = substr(rest, RSTART, RLENGTH)
         quoted = in_string(off + RSTART)
+        head = substr(code, 1, off + RSTART - 1)
+        callpos = off + RSTART
         off += RSTART + RLENGTH - 1
         rest = substr(rest, RSTART + RLENGTH)
         if (quoted) continue
         sub(/^[^'"]*['"]/, "", m); sub(/['"]$/, "", m)
         resolve(from, lang, m, "require", lno)
+        js_bind_call(from, js_lineof(callpos), head, "cjs", m)
       }
       # `require.resolve("...")` is a dependency written the long way.
       rest = code; off = 0
@@ -514,42 +780,62 @@ function scan(from,   lang, line, lno, full, code, m, pend, i) {
       while (match(rest, /import[ \t]*\([ \t]*['"][^'"]+['"]/)) {
         m = substr(rest, RSTART, RLENGTH)
         quoted = in_string(off + RSTART)
+        head = substr(code, 1, off + RSTART - 1)
+        callpos = off + RSTART
         off += RSTART + RLENGTH - 1
         rest = substr(rest, RSTART + RLENGTH)
         if (quoted) continue
         sub(/^[^'"]*['"]/, "", m); sub(/['"]$/, "", m)
         resolve(from, lang, m, "dynamic-import", lno)
+        js_bind_call(from, js_lineof(callpos), head, "dynamic", m)
       }
       continue
     }
 
     if (lang == "py") {
-      # A parenthesised from-import: the names are on the lines after the
-      # opener, and the first physical line names none of them.
+      # A parenthesised or backslash-continued from-import: the names are on
+      # the lines after the opener, and (for the parenthesised form) the
+      # first physical line names none of them. pyparen tells the two
+      # continuations apart, since they close on different conditions.
       if (pyopen != "") {
         t = code
-        gsub(/[ \t]/, "", t)
-        if (t ~ /\)/) { pyopen = ""; sub(/\).*$/, "", t) }
-        nn = split(t, NP, /,/)
-        for (i = 1; i <= nn; i++) {
-          sub(/as.*$/, "", NP[i])
-          if (NP[i] == "" || NP[i] == "*") continue
-          resolve(from, lang, pybase (pybase ~ /\.$/ ? "" : ".") NP[i], "from-import-submodule", lno)
-        }
+        if (pyparen) { if (t ~ /\)/) { pyopen = ""; sub(/\).*$/, "", t) } }
+        else if (t !~ /\\[ \t]*$/) pyopen = ""
+        else sub(/\\[ \t]*$/, "", t)
+        py_submodule_names(from, lno, pyline, pybase, pymto, pymconf, t)
         continue
       }
       if (code ~ /^[ \t]*from[ \t].*import[ \t]*\([ \t]*$/) {
         pybase = code
         sub(/^[ \t]*from[ \t]+/, "", pybase)
         sub(/[ \t].*$/, "", pybase)
-        if (pybase != "") resolve(from, lang, pybase, "from-import", lno)
-        pyopen = 1
+        pymto = ""; pymconf = ""
+        if (pybase != "") { resolve(from, lang, pybase, "from-import", lno); pymto = bindto; pymconf = bindconf }
+        pyline = stmtline
+        pyopen = 1; pyparen = 1
+        continue
+      }
+      # `from app.util.text import slugify, \` continues on the next
+      # physical line(s), any number of them - join before parsing so every
+      # name is seen, the same way the parenthesised form already does.
+      if (code ~ /^[ \t]*from[ \t].*import[ \t]+.*\\[ \t]*$/) {
+        pybase = code
+        sub(/^[ \t]*from[ \t]+/, "", pybase)
+        names = pybase
+        sub(/[ \t].*$/, "", pybase)
+        pymto = ""; pymconf = ""
+        if (pybase != "") { resolve(from, lang, pybase, "from-import", lno); pymto = bindto; pymconf = bindconf }
+        pyline = stmtline
+        sub(/^[^ \t]*[ \t]+import[ \t]+/, "", names)
+        sub(/\\[ \t]*$/, "", names)
+        py_submodule_names(from, lno, pyline, pybase, pymto, pymconf, names)
+        pyopen = 1; pyparen = 0
         continue
       }
       # `import json; import app.util.reading` is two statements, and a
       # reader that takes only the first silently loses the second.
       nsemi = split(code, SC, /;/)
-      for (i = 1; i <= nsemi; i++) py_stmt(from, SC[i], lno)
+      for (i = 1; i <= nsemi; i++) py_stmt(from, SC[i], lno, stmtline)
       continue
     }
 
