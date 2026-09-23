@@ -698,21 +698,86 @@ function js_call_chained(rest, lno, lang,   t) {
 # code is non-blank once comments and strings are stripped, skipping blank
 # and comment-only lines exactly as the main scan does, and reports whether
 # ITS first character chains a require()/import() call the same way a same-
-# line one would (see js_call_chained()). decomment() mutates the shared
-# blockstate/blockq as it goes - saved and restored around every call here,
-# so this speculative look-ahead can never desync the real scan when it
-# reaches these same lines for real.
-function js_peek_chain(lno0, lang,   i, savebs, saveq, pc) {
-  savebs = blockstate; saveq = blockq
+# line one would (see js_call_chained()) - except "!": that reads as the
+# NEXT statement's own non-null-assertion or negation (`!function(){}()`),
+# never as chaining onto THIS call, so only a same-line "!" counts (SPEC).
+# decomment() mutates the shared blockstate/blockq/strmask as it goes - all
+# three are saved and restored around every call here (F1), so this
+# speculative look-ahead can never desync the real scan when it reaches
+# these same lines for real, and never leaves the CALLER's own current
+# line's string mask clobbered for the matches still to come on it.
+function js_peek_chain(lno0, lang,   i, savebs, saveq, savesm, pc) {
+  savebs = blockstate; saveq = blockq; savesm = strmask
   for (i = lno0 + 1; i <= nlines; i++) {
     pc = decomment(FL[i], lang)
     if (pc ~ /^[ \t]*$/) continue
     sub(/^[ \t]*/, "", pc)
-    blockstate = savebs; blockq = saveq
-    return (pc ~ /^[.?!([]/) ? 1 : 0
+    blockstate = savebs; blockq = saveq; strmask = savesm
+    return (pc ~ /^[.?([]/) ? 1 : 0
   }
-  blockstate = savebs; blockq = saveq
+  blockstate = savebs; blockq = saveq; strmask = savesm
   return 0
+}
+
+# The 1-based position of the LAST top-level ',' in `s` - depth 0 in
+# parens/brackets/braces, and outside any string body (per the global
+# `strmask`, so `s` must be the current `code` or an unmodified prefix of
+# it) - or 0 when there is none. A comma inside a nested call, array,
+# object or string is never "top-level": `foo(a, cfg = require(...))`'s
+# comma sits at depth 1 and is never returned here (item 9's `head`
+# narrowing must never mistake a function call's argument list for a
+# declarator list).
+function js_last_top_comma(s,   n, i, c, depth, pos) {
+  n = length(s); depth = 0; pos = 0
+  for (i = 1; i <= n; i++) {
+    if (substr(strmask, i, 1) == "S") continue
+    c = substr(s, i, 1)
+    if (c == "(" || c == "[" || c == "{") depth++
+    else if (c == ")" || c == "]" || c == "}") depth--
+    else if (c == "," && depth == 0) pos = i
+  }
+  return pos
+}
+
+# True when the top-level comma at `uptopos` in `s` sits inside a
+# `(export)? (const|let|var)` statement's own declarator list: the nearest
+# such keyword before it (word-bounded, via lastindex()) exists, and
+# nothing at depth 0 between that keyword and `uptopos` ends the statement
+# first (a ';'). Used by js_decl_head() (item 9) so a LATER declarator's
+# require()/import() call - `const a = ..., cfg = require(...)` - is
+# recognised as bound, while an unrelated comma (a function call's argument
+# list, which js_last_top_comma() never even returns) or a plain
+# reassignment with no governing keyword is not.
+function js_decl_list_open(s, uptopos,   kwend, i, c, depth) {
+  kwend = lastindex(substr(s, 1, uptopos), "const")
+  i = lastindex(substr(s, 1, uptopos), "let"); if (i > kwend) kwend = i
+  i = lastindex(substr(s, 1, uptopos), "var"); if (i > kwend) kwend = i
+  if (kwend == 0) return 0
+  depth = 0
+  for (i = kwend; i <= uptopos; i++) {
+    if (substr(strmask, i, 1) == "S") continue
+    c = substr(s, i, 1)
+    if (c == "(" || c == "[" || c == "{") depth++
+    else if (c == ")" || c == "]" || c == "}") depth--
+    else if (c == ";" && depth == 0) return 0
+  }
+  return 1
+}
+
+# js_bind_call()'s single-declarator patterns all anchor on seeing
+# `(const|let|var)` directly before the bound name - true for the FIRST
+# declarator, but a LATER one in the same statement (`const a = ..., cfg =
+# require(...)`) has no keyword of its own right before it (item 9). Read
+# `head` back only to the nearest top-level ',' (js_last_top_comma()); when
+# a const/let/var statement really governs it (js_decl_list_open()), splice
+# a synthetic keyword back on so js_bind_call()'s EXISTING patterns match
+# the later declarator exactly as they would the first, unmodified. Falls
+# back to `head` unchanged whenever there is no such comma, or it turns out
+# not to be one.
+function js_decl_head(head,   cpos) {
+  cpos = js_last_top_comma(head)
+  if (cpos == 0 || !js_decl_list_open(head, cpos)) return head
+  return "const " substr(head, cpos + 1)
 }
 
 # What a require()/import() call's return value is bound to, read from the
@@ -814,7 +879,10 @@ function py_stmt(from, code, lno, bline,   m, names, mto, mconf) {
 # body, or 0 when there is none. `s` must be the CURRENT `code` (or an
 # unmodified prefix of it), so the global `strmask` - decomment()'s own
 # per-character string mask - still lines up with it position for position.
+# A line with no ';' at all - almost every line - never needs the char-by-
+# char scan below (PERF).
 function py_unquoted_semi(s,   n, i) {
+  if (index(s, ";") == 0) return 0
   n = length(s)
   for (i = 1; i <= n; i++)
     if (substr(s, i, 1) == ";" && substr(strmask, i, 1) != "S") return i
@@ -825,8 +893,12 @@ function py_unquoted_semi(s,   n, i) {
 # that is NOT inside a string body - same interface as split(): fills
 # 1-indexed `arr`, returns the count. A ';' quoted inside a string
 # (`HELP = "usage: a; from app import (x"`) never fakes a second statement
-# out of the string's own text (R3).
+# out of the string's own text (R3). PERF: skip the char-by-char rebuild
+# below when there is no ';' to begin with - true for almost every line, and
+# without it a long line (a 200KB single-line Python file, say) rebuilds
+# itself one character at a time on every call for nothing.
 function py_split_semi(s, arr,   n, i, c, cur, cnt) {
+  if (index(s, ";") == 0) { arr[1] = s; return 1 }
   n = length(s); cur = ""; cnt = 0
   for (i = 1; i <= n; i++) {
     c = substr(s, i, 1)
@@ -835,6 +907,51 @@ function py_split_semi(s, arr,   n, i, c, cur, cnt) {
   }
   cnt++; arr[cnt] = cur
   return cnt
+}
+
+# Builds a string of `n` copies of the single character `ch` (n <= 0 gives
+# "").
+function repeat_char(n, ch,   s) {
+  if (n <= 0) return ""
+  s = sprintf("%" n "s", "")
+  gsub(/ /, ch, s)
+  return s
+}
+
+# The quote character ("'" or '"') still open at the END of `s` - already
+# decommented, so any comment or triple-quoted block is already gone, and a
+# string body's own characters are preserved verbatim either way - a plain
+# single/double-quoted Python (or JS) string can itself be continued onto
+# the next physical line with a trailing "\", and decomment() carries no
+# memory of that across lines (F3): this replays its own single-line quote
+# toggle (escape-aware) to recover which quote, if any, is left open.
+# Returns "" when the line ends outside any such string.
+function py_open_quote(s,   n, i, c, q) {
+  n = length(s); q = ""
+  for (i = 1; i <= n; i++) {
+    c = substr(s, i, 1)
+    if (q != "") {
+      if (c == "\\") { i++; continue }
+      if (c == q) q = ""
+      continue
+    }
+    if (c == "'" || c == "\"") q = c
+  }
+  return q
+}
+
+# The 1-based position of the first UNESCAPED `q` in `s`, or 0 when `s`
+# never closes it (the same string carries on past this line too). Used to
+# find where a string left open by the PREVIOUS line - see py_open_quote() -
+# actually closes on a continuation line, escape-aware the same way.
+function py_find_close(s, q,   n, i, c) {
+  n = length(s)
+  for (i = 1; i <= n; i++) {
+    c = substr(s, i, 1)
+    if (c == "\\") { i++; continue }
+    if (c == q) return i
+  }
+  return 0
 }
 
 # One physical line's worth of Python statements (or a leftover tail of one,
@@ -862,6 +979,9 @@ function py_dispatch(pfrom, plang, pcode, plno,
       sub(/^[^ \t]*[ \t]+import[ \t]*\(/, "", namepart)
       pclosed = 0
       if (namepart ~ /\)/) { pclosed = 1; sub(/\).*$/, "", namepart) }
+      # Inside brackets a trailing "\" is just a continuation, never a name
+      # of its own (GAP2, opening-line variant).
+      else sub(/\\[ \t]*$/, "", namepart)
       if (namepart != "") py_submodule_names(pfrom, plno, pyline, pybase, pymto, pymconf, namepart)
       pyplain = 0
       if (!pclosed) { pyopen = 1; pyparen = 1 }
@@ -917,6 +1037,7 @@ function scan(from,   lang, line, lno, full, code, m, pend, pendmask, i) {
   close(full)
 
   blockstate = 0; blockq = ""; ingo = 0; prevjvm = ""; pyopen = ""; pyplain = 0; pcount = 0
+  pyopenq = ""
   pend = ""
   for (lno = 1; lno <= nlines; lno++) {
     line = FL[lno]
@@ -931,6 +1052,36 @@ function scan(from,   lang, line, lno, full, code, m, pend, pendmask, i) {
       continue
     }
     code = decomment(line, lang)
+
+    # decomment() carries no memory across lines of a plain single/double-
+    # quoted Python string continued with a trailing "\" (F3): starting
+    # fresh here, it reads the string's leftover text as code and misreads
+    # its real closing quote as if it OPENED a new string. `pyopenq` is that
+    # missing memory - the quote character left open at the end of the
+    # PREVIOUS python line, or "" - and this puts the current line right
+    # before anything else (including the blank-line check) sees it: the
+    # true string body up to its real closing quote is blanked out (the
+    # same convention decomment() itself uses for a comment - text that
+    # cannot fool a later regex into reading it as a statement) and
+    # remasked as string, and only what follows is asked of decomment()
+    # again, fresh, for an accurate read of the real code that follows it.
+    if (lang == "py" && pyopenq != "") {
+      p = py_find_close(code, pyopenq)
+      if (p > 0) {
+        suffixcode = decomment(substr(code, p + 1), lang)
+        suffixmask = strmask
+        pyopenq = (length(suffixmask) > length(suffixcode)) ? py_open_quote(suffixcode) : ""
+        strmask = repeat_char(p - 1, "S") "." suffixmask
+        code = repeat_char(p - 1, " ") substr(code, p, 1) suffixcode
+      } else {
+        # The string runs past this whole line too - none of it is real
+        # code, and `pyopenq` stays open for the next line.
+        code = ""; strmask = ""
+      }
+    } else if (lang == "py") {
+      pyopenq = (length(strmask) > length(code)) ? py_open_quote(code) : ""
+    }
+
     if (code ~ /^[ \t]*$/) {
       # A Python backslash continuation joins exactly the next physical
       # line; when that line is comment-only (or blank), it contributes
@@ -955,6 +1106,13 @@ function scan(from,   lang, line, lno, full, code, m, pend, pendmask, i) {
     # dot-fill here (R1) would flatten a joined-in string body to "code",
     # letting a require()/import() written inside it (`a = "require(./evil)"`)
     # match for real once a later line's `}` completes the statement.
+    # It is truncated to `code`'s own length at every site that stores it
+    # (F2): decomment() itself can grow strmask one character LONGER than
+    # its returned code for one line (a trailing "\" inside a string, common
+    # to a Python triple-quoted or backslash-continued string, appends "SS"
+    # to the mask but only the "\" itself to the text), and an untruncated
+    # pendmask then shifts every later in_string() position on the joined
+    # buffer by one.
     joined = 0
     if (pend != "") {
       strmask = pendmask "." strmask
@@ -966,15 +1124,15 @@ function scan(from,   lang, line, lno, full, code, m, pend, pendmask, i) {
     pcount++; pline[pcount] = lno; plen[pcount] = length(rawcode)
 
     if (lang == "js") {
-      if (code ~ /^[ \t]*(import|export)[ \t]/ && code !~ /['"]/ && code !~ /;[ \t]*$/) { pend = code; pendmask = strmask; continue }
+      if (code ~ /^[ \t]*(import|export)[ \t]/ && code !~ /['"]/ && code !~ /;[ \t]*$/) { pend = code; pendmask = substr(strmask, 1, length(code)); continue }
       # `await import(` with the specifier on the following line.
-      if (code ~ /import[ \t]*\([ \t]*$/) { pend = code; pendmask = strmask; continue }
+      if (code ~ /import[ \t]*\([ \t]*$/) { pend = code; pendmask = substr(strmask, 1, length(code)); continue }
       # `const {` / `let {` / `var {` (optionally `export`-prefixed) whose
       # brace does not close on this line: could be a destructured
       # require()/import() a few lines down - js_bind_call() finds it there
       # once the buffer holds the whole declaration. Harmless to join even
       # when it turns out to be an ordinary destructure with no import in it.
-      if (code ~ /^[ \t]*(export[ \t]+)?(const|let|var)[ \t]*\{[^{}]*$/) { pend = code; pendmask = strmask; continue }
+      if (code ~ /^[ \t]*(export[ \t]+)?(const|let|var)[ \t]*\{[^{}]*$/) { pend = code; pendmask = substr(strmask, 1, length(code)); continue }
       m = grab(code, "^[ \t]*(import|export)[^'\"]*from[ \t]*['\"][^'\"]+['\"]", 0, 0)
       if (m != "") {
         fullmatch = m
@@ -1021,7 +1179,11 @@ function scan(from,   lang, line, lno, full, code, m, pend, pendmask, i) {
         # own text spans lines (`await import(\nspec\n)`) must keep reporting
         # where its specifier landed, matching every pre-existing form.
         resolve(from, lang, m, "require", js_lineof(matchend))
-        js_bind_call(from, js_lineof(callpos), head, "cjs", m, chained)
+        # js_decl_head() (item 9): a LATER declarator of the same
+        # `const a = ..., cfg = require(...)` statement has no keyword
+        # directly before it - read `head` back only to its own nearest
+        # top-level comma so js_bind_call() still recognises it as bound.
+        js_bind_call(from, js_lineof(callpos), js_decl_head(head), "cjs", m, chained)
       }
       # `require.resolve("...")` is a dependency written the long way.
       rest = code; off = 0
@@ -1053,7 +1215,7 @@ function scan(from,   lang, line, lno, full, code, m, pend, pendmask, i) {
         chained = js_call_chained(rest, lno, lang)
         sub(/^[^'"]*['"]/, "", m); sub(/['"]$/, "", m)
         resolve(from, lang, m, "dynamic-import", js_lineof(matchend))   # R2, see the require() case above
-        js_bind_call(from, js_lineof(callpos), head, "dynamic", m, chained)
+        js_bind_call(from, js_lineof(callpos), js_decl_head(head), "dynamic", m, chained)   # item 9, see the require() case above
       }
       continue
     }
@@ -1071,17 +1233,40 @@ function scan(from,   lang, line, lno, full, code, m, pend, pendmask, i) {
       if (pyopen != "") {
         t = code
         ended = 0; semipos = 0
-        if (pyparen) { if (t ~ /\)/) { pyopen = ""; ended = 1; sub(/\).*$/, "", t) } }
-        else if (t !~ /\\[ \t]*$/) {
-          pyopen = ""; ended = 1
-          # Only the part of `t` before the first ';' OUTSIDE a string is
-          # more of the continuation's name list - anything after starts a
-          # fresh statement of its own (R4a): `import app.models, \` +
-          # `    app.util; import app.reports` still gives app.reports its
-          # own row, not a junk name glued onto app.util's.
+        if (pyparen) {
+          if (t ~ /\)/) {
+            # Whatever follows the closing ")" is not part of THIS list -
+            # re-dispatch it as fresh statement(s) of its own (F4):
+            # `from app import (models,\n    util); import app.reports`
+            # still gives app.reports its own row, not a silently dropped
+            # tail. Reuses the same "split point, re-dispatch the rest"
+            # mechanism as R4a/GAP1 below.
+            pyopen = ""; ended = 1
+            semipos = index(t, ")")
+            t = substr(code, 1, semipos - 1)
+          } else {
+            # Inside brackets a trailing "\" is just a continuation, never
+            # a name of its own (GAP2): `from app import (models, \` binds
+            # `models`, not a bogus row whose name is literally "\".
+            sub(/\\[ \t]*$/, "", t)
+          }
+        } else {
+          # A ';' outside a string always ends the CURRENT statement - on
+          # the continuation's closing line (R4a) or on a line that itself
+          # keeps going for a DIFFERENT statement right after the ';'
+          # (GAP1): `from app import models, \` + `    util; from
+          # app.other import reports, \` + `    d` binds util to app, then
+          # opens a FRESH continuation for app.other on that same line.
           semipos = py_unquoted_semi(t)
-          if (semipos > 0) t = substr(code, 1, semipos - 1)
-        } else sub(/\\[ \t]*$/, "", t)
+          if (semipos > 0) {
+            pyopen = ""; ended = 1
+            t = substr(code, 1, semipos - 1)
+          } else if (t !~ /\\[ \t]*$/) {
+            pyopen = ""; ended = 1
+          } else {
+            sub(/\\[ \t]*$/, "", t)
+          }
+        }
         if (pyplain) py_plain_names(from, lno, pyline, t)
         else py_submodule_names(from, lno, pyline, pybase, pymto, pymconf, t)
         if (ended && semipos > 0) {

@@ -20,12 +20,17 @@
 # - src/lib/chained-calls.ts: .x on the next code line (:6), ?.x (:8), ['x'] (:9), !.x (:10) are unbound cjs rows on the require( line; :13 await import("./b") with .then(...) on line 14 is an unbound dynamic row on line 13.
 # - src/lib/destructure-default.ts:8 require("./b") as the default of b in a multi-line `const {...} = obj`: one unbound cjs row on line 8 (the destructure binds from obj, not from the module); a gets no row.
 # - src/lib/string-decoy.ts: require(/import( text inside string defaults is data: no row and no edge to evil.ts/evil2.ts.
+# - src/lib/semicolon-string.js:6 the "import('./evil')" string is data; `const a = require('./a')` after the `;` is its own statement: a/*/module/cjs; foo() on line 7 starts a new statement (no chain).
+# - src/lib/no-semicolons.js:5 `const load = () => import("./page"), cfg = require("./cfg")`: the import() is returned from an arrow, so an unbound dynamic row; cfg, the second declarator of the same const, is bound like `const x = require('m')`: cfg/*/module/cjs.
+# - src/lib/multiline-string-destructure.js: the 'x\<newline>y' string default and the f("require('./evil')") argument are strings: no row, no edge.
+# - src/lib/bang-iife.js:4 `!function(){}()` on line 5 does not chain onto require("./a") (spec: a `!` on the next line is a new statement): a2/*/module/cjs.
 # - src/lib/types-trap.ts:6 { type as t } imports the value `type` as t (no type flag); :7 type{T} is a type-only clause; :8 import type from is a default import named type (no flag).
 # - src/route-a.ts:5-6 and src/route-b.ts:6-7 one edge reached by two routes: conf is each statement's own resolution (relative EXTRACTED, no flag; @lib alias INFERRED, alias) whichever comes first.
 # - src/Report.vue:5 template text "import your data from "CSV" files" is not code: no row; only the <script> import on line 12.
 # - src/lib/keywords-a.ts:11, src/lib/types-trap.ts:10 local export const declarators and the export { ... } lists without from: no rows.
 src/Report.vue	12	src/lib/b.ts	x	x	named	EXTRACTED		./lib/b
 src/barrel.cjs	4	src/lib/b.ts		*	module	EXTRACTED	cjs	./lib/b
+src/lib/bang-iife.js	4	src/lib/a.js	a2	*	module	EXTRACTED	cjs	./a
 src/lib/calls.ts	4	src/lib/b.ts		*	module	EXTRACTED	cjs	./b
 src/lib/calls.ts	5	src/lib/b.ts		*	module	EXTRACTED	cjs	./b
 src/lib/calls.ts	6	src/lib/b.ts		*	module	EXTRACTED	dynamic	./b
@@ -57,6 +62,9 @@ src/lib/keywords-c.ts	6	src/lib/b.ts	exported	a	named	EXTRACTED		./b
 src/lib/keywords-c.ts	7	src/lib/b.ts	reimport	a	named	EXTRACTED		./b
 src/lib/multiline-require.ts	6	src/lib/b.ts	a	a	named	EXTRACTED	cjs	./b
 src/lib/multiline-require.ts	6	src/lib/b.ts	c	b	named	EXTRACTED	cjs	./b
+src/lib/no-semicolons.js	5	src/lib/cfg.js	cfg	*	module	EXTRACTED	cjs	./cfg
+src/lib/no-semicolons.js	5	src/lib/page.js		*	module	EXTRACTED	dynamic	./page
+src/lib/semicolon-string.js	6	src/lib/a.js	a	*	module	EXTRACTED	cjs	./a
 src/lib/types-trap.ts	6	src/lib/b.ts	t	type	named	EXTRACTED		./b
 src/lib/types-trap.ts	7	src/lib/b.ts	T	T	named	EXTRACTED	type	./b
 src/lib/types-trap.ts	8	src/lib/b.ts	type	default	default	EXTRACTED		./b

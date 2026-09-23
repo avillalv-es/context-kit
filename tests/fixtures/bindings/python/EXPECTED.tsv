@@ -11,10 +11,16 @@
 # app/continuations.py: the continued line holds two statements (app.models, app.util; app.reports).
 # app/help_text.py: the "; from app import (x" string is data; from app import util lists M
 # (undotted `app` resolves exactly from the root to app/__init__.py) and the subpackage app.util.
+# app/string_continuation.py: "import app.evil" is inside a backslash-continued string - no edge to app/evil.py.
+# app/paren_then_stmt.py, app/backslash_variants.py: a statement after `);` or `;` on a continued line is its own.
 # Bare undotted os, a_package_not_in_this_tree, a_missing_reporting_lib: no root-level file, no edge.
 #
 # Regenerate deliberately, never reflexively - the point of the file is
 # that it does not move when the extractor changes.
+app/backslash_variants.py	app/__init__.py
+app/backslash_variants.py	app/models/__init__.py
+app/backslash_variants.py	app/other.py
+app/backslash_variants.py	app/util/__init__.py
 app/continuations.py	app/models/__init__.py
 app/continuations.py	app/reports.py
 app/continuations.py	app/util/__init__.py
@@ -32,8 +38,13 @@ app/main.py	app/models/database.py
 app/main.py	app/models/thing.py
 app/models/thing.py	app/models/__init__.py
 app/models/thing.py	app/models/base.py
+app/paren_then_stmt.py	app/__init__.py
+app/paren_then_stmt.py	app/models/__init__.py
+app/paren_then_stmt.py	app/reports.py
+app/paren_then_stmt.py	app/util/__init__.py
 app/registry.py	app/models/base.py
 app/registry.py	app/models/thing.py
 app/reports.py	app/models/__init__.py
 app/reports.py	app/models/base.py
 app/reports.py	app/models/database.py
+app/string_continuation.py	app/util/__init__.py
