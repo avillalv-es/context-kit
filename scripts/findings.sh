@@ -5,12 +5,19 @@
 #   findings.sh record --file NAME --question Q --finding F --outcome OUT \
 #                      [--method M] [--sources "a, b"] [--correction C] \
 #                      [--confidence confirmed|inferred|unverified]
-#   findings.sh reflect [--if-stale] [--out PATH] [--half-life N] [--min-corroboration N]
+#   findings.sh reflect [--if-stale | --check] [--out PATH] [--half-life N] [--min-corroboration N]
 #   findings.sh help
 #
 # `record` appends one entry in the shape findings/README.md prescribes, with
 # the date filled in absolutely and the outcome in the form `reflect` can
-# read. `reflect` reads every entry and writes findings/LESSONS.md.
+# read. `reflect` reads every entry and writes findings/LESSONS.md. The entry
+# files are findings/*.md except LESSONS.md (generated) and README.md (the
+# convention, not a log).
+#
+# `reflect --check` writes nothing and prints nothing: it exits 0 when
+# LESSONS.md is current or there is nothing to reflect on, and 3 when
+# `--if-stale` would rewrite it. context-sync.sh uses it for its per-session
+# staleness line, so the rule lives here and only here.
 #
 # Nothing here calls a model and nothing here overwrites an entry. A finding
 # that proves wrong gets a correction appended after it; the disagreement
@@ -27,7 +34,7 @@ CMD="${1:-help}"
 
 FILE=""; QUESTION=""; FINDING=""; METHOD=""; OUTCOME=""
 CORRECTION=""; SOURCES=""; CONFIDENCE=""; OUTPATH=""
-IF_STALE=0; HALFLIFE=30; MINCORR=2; DIR=""
+IF_STALE=0; CHECK=0; HALFLIFE=30; MINCORR=2; DIR=""
 
 die() { printf 'findings: %s\n' "$1" >&2; exit 1; }
 
@@ -46,6 +53,7 @@ while [ $# -gt 0 ]; do
     --half-life)   HALFLIFE="${2:-}"; shift 2 ;;
     --min-corroboration) MINCORR="${2:-}"; shift 2 ;;
     --if-stale)    IF_STALE=1; shift ;;
+    --check)       CHECK=1; shift ;;
     --root)        ROOT="${2:-}"; shift 2 ;;
     -h|--help)     CMD=help; shift ;;
     *) shift ;;
@@ -113,26 +121,42 @@ do_record() {
   printf 'appended to %s\n' "${TARGET#"$ROOT"/}"
 }
 
+# True when LESSONS.md should be (re)written: it is missing, or an entry file
+# is newer than it. $SRC is the entry list do_reflect built.
+lessons_stale() {
+  [ -f "$OUTPATH" ] || return 0
+  for f in $SRC; do
+    [ "$f" -nt "$OUTPATH" ] && return 0
+  done
+  return 1
+}
+
 do_reflect() {
+  # --check is a question, not a task: no directory or no entries means there
+  # is nothing to be stale, so it answers 0 rather than complaining.
+  if [ "$CHECK" -eq 1 ] && [ ! -d "$DIR" ]; then exit 0; fi
   [ -d "$DIR" ] || { printf 'findings: no %s yet - nothing to reflect on\n' "${DIR#"$ROOT"/}" >&2; exit 2; }
   SRC=""
   for f in "$DIR"/*.md; do
     [ -f "$f" ] || continue
-    case "$f" in */LESSONS.md) continue ;; esac
+    # LESSONS.md is this command's own output; README.md is the convention
+    # copied in by /context-init, not a log of findings.
+    case "$f" in */LESSONS.md|*/README.md) continue ;; esac
     SRC="$SRC $f"
   done
+  if [ "$CHECK" -eq 1 ]; then
+    [ -n "$SRC" ] || exit 0
+    if lessons_stale; then exit 3; fi
+    exit 0
+  fi
   [ -n "$SRC" ] || { printf 'findings: no entries in %s\n' "${DIR#"$ROOT"/}" >&2; exit 2; }
 
   # --if-stale makes this cheap enough to run at the start of every session:
   # when nothing has been appended since the last run, recomputing produces
   # the same bytes, so do not.
-  if [ "$IF_STALE" -eq 1 ] && [ -f "$OUTPATH" ]; then
-    NEWER=0
-    for f in $SRC; do [ "$f" -nt "$OUTPATH" ] && NEWER=1 && break; done
-    if [ "$NEWER" -eq 0 ]; then
-      printf 'findings: %s is current\n' "${OUTPATH#"$ROOT"/}"
-      return 0
-    fi
+  if [ "$IF_STALE" -eq 1 ] && ! lessons_stale; then
+    printf 'findings: %s is current\n' "${OUTPATH#"$ROOT"/}"
+    return 0
   fi
 
   TODAY="$(date -u '+%Y-%m-%d' 2>/dev/null)"
@@ -161,6 +185,7 @@ findings - the working log, and the lessons it adds up to
 
   reflect  read every entry, write findings/LESSONS.md
            --if-stale            no-op when LESSONS.md is already current
+           --check               write nothing; exit 3 when it is stale, else 0
            --half-life N         days after which a signal counts half (30)
            --min-corroboration N useful entries before "preferred" (2)
            --out PATH            write somewhere else

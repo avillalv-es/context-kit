@@ -299,6 +299,38 @@ do_session() {
     fi
   fi
 
+  # Context sync: run the cheap first step of the context-sync skill here so
+  # the session can skip it. An accelerator only: the managed Context sync
+  # section of CLAUDE.md makes the session run the same check where this hook
+  # does not run. It needs a ledger, so a project that never synced is left to
+  # that section, and it is not claimed once because sources change between
+  # sessions. It sits above the "off" return below, so it fires at any lean
+  # level. Capped at 3s where timeout exists; a timeout or error adds nothing,
+  # and the session then runs the check itself.
+  SYNC="$ROOT/scripts/context-sync.sh"
+  if [ -f "$PROJ/.claude/context-sync.tsv" ] && [ -r "$SYNC" ]; then
+    if command -v timeout >/dev/null 2>&1; then
+      SYNC_OUT="$(timeout 3 sh "$SYNC" check --root "$PROJ" 2>/dev/null)"
+    else
+      SYNC_OUT="$(sh "$SYNC" check --root "$PROJ" 2>/dev/null)"
+    fi
+    SYNC_RC=$?
+    if [ "$SYNC_RC" -eq 0 ]; then
+      if [ -n "$SYNC_OUT" ]; then
+        NOTE="context-kit: context-sync check found work; go straight to step 2 of the context-sync skill with these lines:
+$SYNC_OUT"
+      else
+        NOTE="context-kit: context sources unchanged since last sync - skip the context-sync check this session."
+      fi
+      if [ -n "$OUT" ]; then
+        OUT="$OUT
+$NOTE"
+      else
+        OUT="$NOTE"
+      fi
+    fi
+  fi
+
   REPEATS="$(pending_repeats)"
   if [ -n "$REPEATS" ]; then
     NOTE="context-kit: these procedures repeated ${THRESHOLD}+ times and no skill covers them: ${REPEATS}. Capture the genuinely repeatable ones with the skill-capture skill."
@@ -310,8 +342,39 @@ $NOTE"
     fi
   fi
 
-  # "off" still gets the two notices above - only the ruleset itself is an
-  # opt-in. (Previously this whole function returned before either notice
+  # Active PR train: a pointer and nothing more. The managed PR train section
+  # of CLAUDE.md already tells the session to read any train with
+  # "status: active", so this only makes the resume faster where the hook runs.
+  # It is not claimed once, so it fires again after every compaction, and it
+  # sits above the "off" return below so it fires at any lean level. The status
+  # line counts only inside the front matter: the first line must be "---" and
+  # the scan stops at the next one. A missing directory or no match prints
+  # nothing.
+  TRAIN=""
+  for F in "$PROJ"/.claude/handoff/*.md; do
+    [ -f "$F" ] && [ -s "$F" ] || continue
+    if awk '
+      NR == 1 { if ($0 ~ /^---[ \t\r]*$/) next; exit }
+      /^---[ \t\r]*$/ { exit }
+      /^status:[ \t]*active[ \t\r]*$/ { hit = 1; exit }
+      END { exit !hit }
+    ' "$F" 2>/dev/null; then
+      TRAIN="${F##*/}"
+      break
+    fi
+  done
+  if [ -n "$TRAIN" ]; then
+    NOTE="context-kit: active PR train - read .claude/handoff/${TRAIN} and continue from its next unchecked task."
+    if [ -n "$OUT" ]; then
+      OUT="$OUT
+$NOTE"
+    else
+      OUT="$NOTE"
+    fi
+  fi
+
+  # "off" still gets the notices above - only the ruleset itself is an
+  # opt-in. (Previously this whole function returned before any notice
   # was computed; README.md's "off leaves bootstrap and repeat detection in
   # place" was never actually true until this line moved down here.)
   if [ "$LEVEL" = "off" ]; then

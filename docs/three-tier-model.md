@@ -86,6 +86,19 @@ This is the bucket people resist most, because the summaries feel useful. They
 are useful — to a human skimming. An agent with file access does not need them
 and is harmed by the stale ones.
 
+### Sources and destinations
+
+The tiers are destinations, not the place knowledge starts. It starts in
+project markdown: a `PROGRESS.md`, `docs/`, notes, an ideas file. Those change
+constantly, load only when someone opens them, and nothing makes anyone open
+them, so the durable parts never reach the tiers on their own. `context-sync`
+treats that markdown as a *source* and routes it with the classification test
+below, tie-break and all: facts to `knowledge/`, decisions and dead ends to
+`findings/`, path-bound conventions to `.claude/rules/`, repeatable procedures to
+`.claude/skills/`. Status chatter and undecided ideas stay in their source, with
+one `knowledge/INDEX.md` row saying when to read it. A ledger records what has
+been routed, so a later session reads only what changed.
+
 ## The classification test
 
 > If I never saw this, would I get something wrong on a task that has nothing

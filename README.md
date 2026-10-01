@@ -185,13 +185,16 @@ the cause of this failure mode.
 | `/context-init` | Set up the layout, or refresh it if it is there. Picks its own mode. |
 | `/context-init cleanup` | Audit and rebalance the layout. Stops at a table before moving anything. |
 | `/context-init off\|on <section>` | Turn a managed `CLAUDE.md` section off, or back on. |
+| `/context-sync [now\|off\|on\|sources add <glob>]` | Route PROGRESS.md, docs/ and notes into knowledge/, findings/, rules and skills. Runs on its own at session start through CLAUDE.md. |
 | `/context-graph` | Draw the layout. `serve` for a URL, `vault` for Obsidian notes. |
 | `/finding` | Record a finding; `/finding reflect` rolls them into `LESSONS.md`. |
+| `/pr-train [status\|off\|on]` | Split a plan of several PR-sized asks into a PR train, resume an active one, or turn the `CLAUDE.md` section off or on. |
 | `/blast-radius` | What breaks if this changes. `--diff`, a symbol, or `--file`. |
 | `/context-init bootstrap` | Scaffold and stamp the managed sections only. No survey. |
 | `/skill-capture` | Turn a repeatable procedure into a project skill. |
 | `/lean lite\|full\|ultra\|off` | Set the execution level. Persists across sessions. |
 | `/lean-review [--repo]` | What can be deleted. Diff by default, whole tree with `--repo`. |
+| `/model-routing [on\|off]` | Turn the Model routing section of `CLAUDE.md` on or off; no argument shows its state. |
 | `/shortcut-ledger` | Every deliberate shortcut marked in this repo. |
 | `/context-help` | The reference card. |
 
@@ -221,22 +224,107 @@ Restart the session afterwards and run `/context` to see the real number.
 
 ### Managed sections
 
-`/context-init` writes two sections into `CLAUDE.md`, Context layout and Lean
-execution, each between `<!-- context-kit:begin <id> -->` and
-`<!-- context-kit:end <id> -->` markers. Their text comes from the plugin
-(`templates/sections/`, and `hooks/rules.md` for Lean execution), copied in by
-`scripts/claude-sections.sh` rather than written by the model. Re-running
-`/context-init` refreshes them: missing sections are added, outdated ones are
-rewritten in place, and a block from an older version without markers is
-wrapped and upgraded. Anything you edit inside the markers is overwritten, so
-change what you want outside them. Claude Code strips the markers before it
-loads the file, so they cost no tokens.
+`/context-init` writes these sections into `CLAUDE.md`, each between
+`<!-- context-kit:begin <id> -->` and `<!-- context-kit:end <id> -->` markers:
 
-To turn one off, run `/context-init off <section>` (`context-layout` or
-`lean-execution`). The block becomes a single
-`<!-- context-kit:off <section> -->` line that a refresh never adds back, and
-`/context-init on <section>` restores it. `/context-init cleanup` treats
-managed blocks as the plugin's and does not touch them.
+| Id | Section |
+|---|---|
+| `context-layout` | Context layout |
+| `lean-execution` | Lean execution |
+| `model-routing` | Model routing |
+| `context-sync` | Context sync |
+| `pr-train` | PR train |
+
+Their text comes from the plugin (`templates/sections/`, and `hooks/rules.md`
+for Lean execution), copied in by `scripts/claude-sections.sh` rather than
+written by the model. Re-running `/context-init` refreshes them: missing
+sections are added, outdated ones are rewritten in place, and a block from an
+older version without markers is wrapped and upgraded. Anything you edit inside
+the markers is overwritten, so change what you want outside them. Claude Code
+strips the markers before it loads the file, so they cost no tokens.
+
+To turn one off, run `/context-init off <section>` with one of the ids above.
+The block becomes a single `<!-- context-kit:off <section> -->` line that a
+refresh never adds back, and `/context-init on <section>` restores it.
+`/context-init cleanup` treats managed blocks as the plugin's and does not
+touch them.
+
+### Model routing
+
+The Model routing section tells the session to decide and to send the legwork
+to subagents, passing `model` on every Agent call. Sonnet (always the latest)
+explores, searches, researches, codes to an agreed plan, writes markdown and
+runs tests. Opus plans, makes architecture and trade-off calls, gives review
+verdicts and judges root causes; a session not running Opus sends those to an
+Opus subagent. A model your organization restricts is never used. It is
+stamped like the other managed sections; `/model-routing off` turns it off and
+`/model-routing on` brings it back.
+
+### Context sync
+
+PROGRESS.md, `docs/` and notes change constantly, while `knowledge/` and
+`findings/` do not. Context sync closes that gap. Project markdown is the
+source, and `knowledge/`, `findings/`, `.claude/rules/` and `.claude/skills/`
+are where it is routed.
+
+The trigger is a `CLAUDE.md` section rather than a hook, so it works where org
+policy blocks hooks. Before your first request in each session, Claude runs
+the `context-sync` skill. Its first step is `scripts/context-sync.sh check`,
+which prints one line per thing that changed and nothing at all when
+everything is current.
+
+When something has changed, one background Sonnet subagent routes it while
+your request goes ahead:
+
+- facts go to `knowledge/` with an INDEX row;
+- decisions, dead ends and measured results go to `findings/`;
+- path-bound conventions go to rules, with `paths:`;
+- repeatable procedures go to skills;
+- status chatter stays where it is, with one INDEX pointer.
+
+A tie goes to the cheaper tier. The session reviews the routing, marks it, and
+reports one line, such as `context sync: PROGRESS.md -> 2 knowledge, 1 finding`.
+
+The ledger `.claude/context-sync.tsv` stores blob hashes and is committed, so a
+team shares sync state and later sessions read only what changed. `check` also
+flags:
+
+- a knowledge file or skill with no INDEX row;
+- a rule with no `paths:`;
+- a skill whose description isn't a trigger;
+- a findings entry worth promoting;
+- a stale `LESSONS.md`;
+- an outdated `CLAUDE.md` section.
+
+Sources are the root `*.md` files and `docs/`.
+`/context-sync sources add 'notes/*.md'` adds more. `/context-init` runs the
+first ingest, both on a new repo and when refreshing an old one.
+`/context-sync off` turns it off.
+
+Where the plugin's hooks run, the session-start hook also runs the check and
+tells the session whether anything changed, which saves a step; the section
+works without it.
+
+### PR trains
+
+When an agreed plan holds two or more asks that would each be reviewed as
+their own PR (a UI change plus a roles change, say), the `pr-train` skill
+runs them as a train: one branch and one PR per task, built in dependency
+order. State lives in a temporary file, `.claude/handoff/<slug>.md`, written
+from `templates/handoff.md`. The directory carries its own `.gitignore` of
+`*`, so it is never committed. The file records the goal, the repo's PR
+conventions, a task checklist, a done log and mid-task state. Tasks whose
+files don't overlap are built at the same time by subagents in isolated git
+worktrees. Shared files (README, changelog, version manifests, lockfiles,
+indexes) are applied afterwards, in task order, so branches never conflict.
+After each PR or parallel batch, Claude updates the train file and asks you
+to run `/compact`; it cannot compact itself. Resume needs no hook: the
+managed PR train section of `CLAUDE.md` reloads after compaction and tells
+the next session to read any train with `status: active` and continue from
+its next unchecked task. Where the plugin's hooks run, the session-start hook
+also points at the active train file; that is only a shortcut.
+`/pr-train status` shows the task list. `/pr-train off` and `/pr-train on`
+toggle the section.
 
 ### Turning it off
 
@@ -498,22 +586,29 @@ context-kit/
 ├── commands/
 │   ├── context-init.md          # /context-init
 │   ├── context-graph.md         # /context-graph
+│   ├── context-sync.md          # /context-sync
 │   ├── blast-radius.md          # /blast-radius
 │   ├── finding.md               # /finding
 │   ├── skill-capture.md         # /skill-capture
 │   ├── lean.md                  # /lean
 │   ├── lean-review.md           # /lean-review
+│   ├── model-routing.md         # /model-routing
+│   ├── pr-train.md              # /pr-train
 │   ├── shortcut-ledger.md       # /shortcut-ledger
 │   └── context-help.md          # /context-help
 ├── skills/
 │   ├── context-cleanup/         # the scaffold, refresh and audit skill
 │   │   └── references/          # modes A, R and B, loaded only when chosen
 │   ├── context-graph/           # reads graph.json and says what to cut
+│   ├── context-sync/            # the session-start sync
+│   │   └── references/          # routing rules, read only when something changed
 │   ├── blast-radius/            # impact analysis, and how far to trust it
 │   ├── finding-ledger/          # the working log and its lessons
 │   ├── skill-capture/           # writes new skills
 │   ├── lean-execution/          # the long-form ruleset
 │   ├── lean-review/             # what can be deleted
+│   ├── pr-train/                # split a plan into PRs, resume across /compact
+│   │   └── references/          # the parallel-lane prompt, loaded only for a batch
 │   └── shortcut-ledger/         # the debt ledger
 ├── knowledge/
 │   └── platform-native.md       # tier-3 reference, loads on lookup only
@@ -528,6 +623,7 @@ context-kit/
 │   ├── context-vault.awk        # graph.json -> an Obsidian vault
 │   ├── findings.sh              # record | reflect
 │   ├── findings.awk             # the deterministic lessons aggregator
+│   ├── context-sync.sh          # check | diff | mark | sources
 │   └── claude-sections.sh       # status | stamp | off | on: the managed CLAUDE.md sections
 ├── docs/
 │   ├── three-tier-model.md      # the model, and why it is shaped this way
@@ -538,11 +634,13 @@ context-kit/
 │   ├── adoption.md              # rolling it into a repo that already exists
 │   └── anti-patterns.md         # the failure modes, and what they look like
 ├── tests/
+│   ├── checks/                  # per-feature suites sourced by check.sh
 │   └── fixtures/imports/        # one per language, with its expected edges
 └── templates/
     ├── graph/viewer.html        # the offline, dependency-free graph viewer
     ├── sections/                # the managed CLAUDE.md sections, one file each
     ├── CLAUDE.template.md       # a starting tier-1 file
+    ├── handoff.md               # the PR train file, copied to .claude/handoff/
     ├── rules/example-rule.md    # a tier-2 rule with correct frontmatter
     ├── knowledge/INDEX.md       # the tier-3 index
     └── findings/README.md       # the compaction-survival convention

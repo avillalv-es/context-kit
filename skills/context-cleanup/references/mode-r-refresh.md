@@ -1,8 +1,9 @@
 # Mode R — Refresh
 
 Read this only when Mode R is the mode. The layout is already in place:
-bring the plugin-owned sections of `CLAUDE.md` up to date, and give a
-bootstrap-only file the survey it never had. Change nothing else. Do not
+bring the plugin-owned sections of `CLAUDE.md` up to date, give a
+bootstrap-only file the survey it never had, and route project markdown that
+changed (or was never read) into the layout. Change nothing else. Do not
 commit.
 
 ---
@@ -22,7 +23,7 @@ It adds the sections that are missing, rewrites the outdated ones between
 their markers, wraps blocks written by 0.4.x in markers, and leaves a section
 that was turned off alone. Edits inside the markers are overwritten, which is
 the point: the text comes from the plugin. Everything outside the markers is
-left exactly as it was. Keep its output for R4, and pass on any warning it
+left exactly as it was. Keep its output for R5, and pass on any warning it
 prints about a block it left untouched.
 
 ### R3 — Survey a bootstrap-only file
@@ -35,7 +36,20 @@ then write A3's sections (the "if no `CLAUDE.md` exists" list), and insert them
 after the title and before the first managed block. If the file has `## `
 headings of its own, skip this step.
 
-### R4 — Report
+### R4 — Sync
 
-One line: what R1 created, the R2 output, and whether R3 ran. If the line
-count passes 200, add that `/context-init cleanup` will rebalance it.
+Run the `context-sync` skill in the **foreground**: spawn its routing subagent
+with `run_in_background: false` and wait for it. R2 has just stamped the
+Context sync section, so the next session will do this by itself; this run
+catches up now. Ignore any `sections` line it reports, because R2 handled
+those. A repo that was initialized before context sync existed has never had
+its markdown read, so every source is `new` and this is the initial ingest
+that Mode A's A2b does; a repo that has synced before only gets what changed.
+Keep the skill's one-line summary for R5. If `check` printed nothing, there is
+nothing to say.
+
+### R5 — Report
+
+One line: what R1 created, the R2 output, whether R3 ran, and the R4 sync line.
+If the line count passes 200, add that `/context-init cleanup` will rebalance
+it.

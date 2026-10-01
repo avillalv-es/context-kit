@@ -13,9 +13,14 @@ context-kit
     /context-init cleanup    audit and rebalance; stops at a table first
     /context-init bootstrap  scaffold + stamp the managed sections, no survey
     /context-init off <s>    turn a managed CLAUDE.md section off (or: on <s>)
-                             sections: context-layout, lean-execution
+                             sections: context-layout, lean-execution,
+                             model-routing, context-sync, pr-train
                              refreshed on re-run; edits inside the markers
                              are overwritten
+    /context-sync            route PROGRESS.md, docs/ and notes into the tiers
+    /context-sync off|on     turn the session-start sync off or on
+    /context-sync sources add <glob>|list
+                             extra markdown to treat as sources
     /context-graph           draw the layout; also `serve`, `vault`, `open`
     /context-graph --code    add the module import layer
     /context                 (built-in) the real context-window number
@@ -34,11 +39,18 @@ context-kit
     /finding                 record what you just settled, or a dead end
     /finding reflect         roll every entry into findings/LESSONS.md
 
+  PR train
+    /pr-train                split the agreed plan into PRs, or resume the
+                             active train in .claude/handoff/
+    /pr-train status         show the train's task list
+    /pr-train off|on         turn the CLAUDE.md section off or on
+
   Lean execution
     /lean lite               build it, then name the leaner option in one line
     /lean full               the ladder enforced (default)
     /lean ultra              deletion before addition
     /lean off                no ruleset injected
+    /model-routing           show whether model routing is on; also on, off
 
   Tiers
     1  CLAUDE.md                     every session, always. Routing + the rare
