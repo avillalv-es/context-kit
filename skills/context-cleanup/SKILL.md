@@ -1,31 +1,34 @@
 ---
 name: context-cleanup
-description: Use when the user runs /context-init, or asks to set up, initialize, clean up, tier, audit, reorganize, or trim this repo's three-tier context layout or its CLAUDE.md, or asks which tier a piece of project knowledge belongs in. Also use in Mode 0 when the context-kit session-start hook reports that this project has no context layout yet. Scaffolds .claude/rules/, knowledge/ and findings/, and rebalances CLAUDE.md against a 200-line cap. Explicit invocation or hook request only. Never invoke this during an unrelated task.
+description: Use when the user runs /context-init, or asks to set up, initialize, clean up, tier, audit, reorganize, or trim this repo's three-tier context layout or its CLAUDE.md, or asks which tier a piece of project knowledge belongs in. Also use in Mode 0 when the context-kit session-start hook reports that this project has no context layout yet. Scaffolds .claude/rules/, knowledge/ and findings/, keeps the plugin-owned CLAUDE.md sections current, and rebalances CLAUDE.md against a 200-line cap. Explicit invocation or hook request only. Never invoke this during an unrelated task.
 ---
 
 # Context layout: initialize and clean up
 
-This skill has three modes. Pick one, announce it in a single line, and follow
-that mode's workflow.
+This skill has four modes. Pick one, announce it in a single line, and follow
+that mode's workflow. `commands/context-init.md` says how the choice is made.
 
-- **Mode 0: Bootstrap** — the session-start hook asked for it, or the user
-  wants the layout in place with no survey. Scaffold and stamp the marker,
-  nothing else. Cheap, idempotent, always safe to run.
-- **Mode A: Initialize** — no `CLAUDE.md`, or one that lacks a
-  `## Context layout` section. Scaffold the layout, survey the repo, and adopt
-  any existing content into it.
-- **Mode B: Cleanup** — the layout already exists. Audit and rebalance it.
+- **Mode 0: Bootstrap** — the `bootstrap` argument, or the session-start hook
+  asked for it. Scaffold and stamp the managed sections, nothing else. Cheap,
+  idempotent, always safe to run.
+- **Mode A: Initialize** — no `CLAUDE.md`, or one with no context layout (no
+  `## Context layout` heading and no `context-layout` marker). Scaffold the
+  layout, survey the repo, and adopt any existing content into it.
+- **Mode R: Refresh** — the layout is present. Bring the plugin-owned sections
+  of `CLAUDE.md` up to date, and survey a file that was only ever bootstrapped.
+  This is what a plain re-run of `/context-init` does.
+- **Mode B: Cleanup** — the `cleanup` argument. Audit and rebalance the layout.
 
-Both modes share one goal: place every piece of knowledge in the cheapest tier
-that still guarantees it gets used. Placing something too high is not a safe
-default. It taxes every session and every subagent, and it reduces adherence
-to everything else in the file.
+The survey and audit modes share one goal: place every piece of knowledge in
+the cheapest tier that still guarantees it gets used. Placing something too
+high is not a safe default. It taxes every session and every subagent, and it
+reduces adherence to everything else in the file.
 
 ---
 
 ## The classification test
 
-Used by both modes. For each line or coherent block of knowledge:
+Used by Modes A and B. For each line or coherent block of knowledge:
 
 > If I never saw this, would I get something wrong on a task that has nothing
 > to do with this knowledge's subject?
@@ -50,9 +53,10 @@ tier 2 produces invisible drag on every session forever.
 ## Mode 0: Bootstrap
 
 The automatic path. The session-start hook runs this when a project has no
-`## Context layout` marker. It is deliberately the cheapest useful thing: no
-survey, no judgment, no questions. Do it, say one line, and get back to
-whatever the user actually asked for.
+context layout (no `## Context layout` heading and no `context-layout` marker).
+It is deliberately the cheapest useful thing: no survey, no judgment, no
+questions. Do it, say one line, and get back to whatever the user actually
+asked for.
 
 ### 0.1 — Scaffold
 
@@ -68,33 +72,42 @@ findings/.gitkeep
 `knowledge/INDEX.md` gets a heading and one line explaining that each entry is
 a topic file named for what someone would search for.
 
-### 0.2 — Stamp the marker
+### 0.2 — Stamp the managed sections
 
-If `CLAUDE.md` does not exist, create it with a title line and the stub from
-A4. If it exists, **append** the stub — never overwrite, never reorder, never
-reword what is already there. Then do A4b (append the ruleset stub), the same
-in both modes.
+If `CLAUDE.md` does not exist, create it first with a title line only. Then:
+
+```
+sh "${CLAUDE_PLUGIN_ROOT}/scripts/claude-sections.sh" stamp CLAUDE.md
+```
+
+The script appends the Context layout and Lean execution sections to the end
+of the file, each between `context-kit` markers, and never touches what is
+already there. Do not write that text yourself; it is the plugin's, and the
+script is what keeps it verbatim.
 
 ### 0.3 — Report, in one line
 
 ```
-context layout bootstrapped: <files created>. For a full survey, run /context-init.
+context layout bootstrapped: <files created>; <the stamp output>. Run /context-init for a full survey.
 ```
 
-Do not survey the repo. Do not propose moves. Do not classify anything. That is
-Mode A, and it is the user's call to run it.
+The survey is the user's call. The next `/context-init` runs Mode R, which
+sees a `CLAUDE.md` holding nothing but the managed sections and runs Mode A's
+survey on it (step R3). Do not survey, propose moves or classify anything now.
 
 ---
 
-## Mode A and Mode B
+## Modes A, R and B
 
-The two survey modes live in their own files, because a run only ever takes
-one of them and the other is pure weight on the invocation:
+The three longer modes live in their own files, because a run only ever takes
+one of them and the others are pure weight on the invocation:
 
 - **Mode A: Initialize** — read `references/mode-a-initialize.md`.
+- **Mode R: Refresh** — read `references/mode-r-refresh.md`.
 - **Mode B: Cleanup** — read `references/mode-b-cleanup.md`.
 
-Read the one you announced. Do not read both.
+Read the one you announced. Do not read the others, except that Mode R sends
+you to Mode A's steps A1 to A3 when it surveys.
 
 ## Authoring standards
 

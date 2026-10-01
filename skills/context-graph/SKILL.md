@@ -71,7 +71,7 @@ Work the `issues` array first — each one is a concrete, fixable defect:
 | never invoked | either nobody needed it, or the description does not match how people ask | rewrite the description as a trigger, or delete |
 | description is not a trigger | "helps with X" matches nothing | rewrite as "Use when…" |
 | SKILL.md over 12KB | the whole file loads when it fires | split the reference half into `references/` |
-| tier 1 over 120 lines | paid on every session and every subagent | `/context-init` Mode B |
+| tier 1 over 120 lines | paid on every session and every subagent | `/context-init cleanup` (Mode B) |
 
 Then look for what the findings cannot catch:
 
@@ -88,7 +88,7 @@ Then look for what the findings cannot catch:
 
 Findings only, one line each, biggest cut first. Do not edit the layout
 unless the user asks — moving knowledge is where it gets silently lost, which
-is why `/context-init` Mode B stops and shows a table first.
+is why `/context-init cleanup` (Mode B) stops and shows a table first.
 
 Do not quote a token or percentage saving. The graph counts nodes, edges,
 lines and match counts; those are real. A "40% smaller context" is not,

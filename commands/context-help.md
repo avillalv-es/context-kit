@@ -9,8 +9,13 @@ Add no commentary.
 context-kit
 
   Layout
-    /context-init            set up or rebalance the three-tier layout
-    /context-init bootstrap  scaffold + stamp the marker only, no survey
+    /context-init            set up the three-tier layout, or refresh it
+    /context-init cleanup    audit and rebalance; stops at a table first
+    /context-init bootstrap  scaffold + stamp the managed sections, no survey
+    /context-init off <s>    turn a managed CLAUDE.md section off (or: on <s>)
+                             sections: context-layout, lean-execution
+                             refreshed on re-run; edits inside the markers
+                             are overwritten
     /context-graph           draw the layout; also `serve`, `vault`, `open`
     /context-graph --code    add the module import layer
     /context                 (built-in) the real context-window number
