@@ -185,6 +185,7 @@ the cause of this failure mode.
 | `/context-init` | Set up the layout, or refresh it if it is there. Picks its own mode. |
 | `/context-init cleanup` | Audit and rebalance the layout. Stops at a table before moving anything. |
 | `/context-init off\|on <section>` | Turn a managed `CLAUDE.md` section off, or back on. |
+| `/context-sync [now\|off\|on\|sources add <glob>]` | Route PROGRESS.md, docs/ and notes into knowledge/, findings/, rules and skills. Runs on its own at session start through CLAUDE.md. |
 | `/context-graph` | Draw the layout. `serve` for a URL, `vault` for Obsidian notes. |
 | `/finding` | Record a finding; `/finding reflect` rolls them into `LESSONS.md`. |
 | `/pr-train [status\|off\|on]` | Split a plan of several PR-sized asks into a PR train, resume an active one, or turn the `CLAUDE.md` section off or on. |
@@ -231,6 +232,7 @@ Restart the session afterwards and run `/context` to see the real number.
 | `context-layout` | Context layout |
 | `lean-execution` | Lean execution |
 | `model-routing` | Model routing |
+| `context-sync` | Context sync |
 | `pr-train` | PR train |
 
 Their text comes from the plugin (`templates/sections/`, and `hooks/rules.md`
@@ -257,6 +259,51 @@ verdicts and judges root causes; a session not running Opus sends those to an
 Opus subagent. A model your organization restricts is never used. It is
 stamped like the other managed sections; `/model-routing off` turns it off and
 `/model-routing on` brings it back.
+
+### Context sync
+
+PROGRESS.md, `docs/` and notes change constantly, while `knowledge/` and
+`findings/` do not. Context sync closes that gap. Project markdown is the
+source, and `knowledge/`, `findings/`, `.claude/rules/` and `.claude/skills/`
+are where it is routed.
+
+The trigger is a `CLAUDE.md` section rather than a hook, so it works where org
+policy blocks hooks. Before your first request in each session, Claude runs
+the `context-sync` skill. Its first step is `scripts/context-sync.sh check`,
+which prints one line per thing that changed and nothing at all when
+everything is current.
+
+When something has changed, one background Sonnet subagent routes it while
+your request goes ahead:
+
+- facts go to `knowledge/` with an INDEX row;
+- decisions, dead ends and measured results go to `findings/`;
+- path-bound conventions go to rules, with `paths:`;
+- repeatable procedures go to skills;
+- status chatter stays where it is, with one INDEX pointer.
+
+A tie goes to the cheaper tier. The session reviews the routing, marks it, and
+reports one line, such as `context sync: PROGRESS.md -> 2 knowledge, 1 finding`.
+
+The ledger `.claude/context-sync.tsv` stores blob hashes and is committed, so a
+team shares sync state and later sessions read only what changed. `check` also
+flags:
+
+- a knowledge file or skill with no INDEX row;
+- a rule with no `paths:`;
+- a skill whose description isn't a trigger;
+- a findings entry worth promoting;
+- a stale `LESSONS.md`;
+- an outdated `CLAUDE.md` section.
+
+Sources are the root `*.md` files and `docs/`.
+`/context-sync sources add 'notes/*.md'` adds more. `/context-init` runs the
+first ingest, both on a new repo and when refreshing an old one.
+`/context-sync off` turns it off.
+
+Where the plugin's hooks run, the session-start hook also runs the check and
+tells the session whether anything changed, which saves a step; the section
+works without it.
 
 ### PR trains
 
@@ -539,6 +586,7 @@ context-kit/
 ├── commands/
 │   ├── context-init.md          # /context-init
 │   ├── context-graph.md         # /context-graph
+│   ├── context-sync.md          # /context-sync
 │   ├── blast-radius.md          # /blast-radius
 │   ├── finding.md               # /finding
 │   ├── skill-capture.md         # /skill-capture
@@ -552,6 +600,8 @@ context-kit/
 │   ├── context-cleanup/         # the scaffold, refresh and audit skill
 │   │   └── references/          # modes A, R and B, loaded only when chosen
 │   ├── context-graph/           # reads graph.json and says what to cut
+│   ├── context-sync/            # the session-start sync
+│   │   └── references/          # routing rules, read only when something changed
 │   ├── blast-radius/            # impact analysis, and how far to trust it
 │   ├── finding-ledger/          # the working log and its lessons
 │   ├── skill-capture/           # writes new skills
@@ -573,6 +623,7 @@ context-kit/
 │   ├── context-vault.awk        # graph.json -> an Obsidian vault
 │   ├── findings.sh              # record | reflect
 │   ├── findings.awk             # the deterministic lessons aggregator
+│   ├── context-sync.sh          # check | diff | mark | sources
 │   └── claude-sections.sh       # status | stamp | off | on: the managed CLAUDE.md sections
 ├── docs/
 │   ├── three-tier-model.md      # the model, and why it is shaped this way
