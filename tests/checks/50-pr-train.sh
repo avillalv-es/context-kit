@@ -155,6 +155,48 @@ else
   fi
 fi
 
+# --- the session hook points at an active train -------------------------------
+# An accelerator only: the CLAUDE.md section is what resumes a train. The hook
+# names an active one, repeats after every compaction, fires at any lean level,
+# and says nothing for a complete train, a missing dir or a status line that is
+# outside the front matter.
+PT_HK="$PT_DIR/hook"
+mkdir -p "$PT_HK/proj/.claude/handoff" "$PT_HK/bare"
+# $1 data dir name, $2 project dir under $PT_HK, $3 lean level ("" = default)
+pt_hook() { CONTEXT_KIT_LEVEL="${3:-}" CLAUDE_PLUGIN_ROOT="$PWD" CLAUDE_PLUGIN_DATA="$PT_HK/$1" CLAUDE_PROJECT_DIR="$PT_HK/$2" sh hooks/context-kit.sh session 2>/dev/null; }
+PT_TRAIN="$PT_HK/proj/.claude/handoff/t.md"
+
+printf -- '---\nstatus: active\nplan: x\n---\n\n# Train: t\n' > "$PT_TRAIN"
+case "$(pt_hook d1 proj)" in
+  *"active PR train"*".claude/handoff/t.md"*) pass "session hook points at an active PR train" ;;
+  *) fail "session hook did not point at the active PR train" ;;
+esac
+case "$(pt_hook d1 proj)" in
+  *"active PR train"*) pass "the PR train pointer repeats on the next session start" ;;
+  *) fail "the PR train pointer fired once; it must repeat after every compaction" ;;
+esac
+case "$(pt_hook d2 proj off)" in
+  *"active PR train"*) pass "the PR train pointer fires even with lean off" ;;
+  *) fail "the PR train pointer was skipped when the lean level is off" ;;
+esac
+
+printf -- '---\nstatus: complete\nplan: x\n---\n\n# Train: t\n' > "$PT_TRAIN"
+case "$(pt_hook d3 proj)" in
+  *"active PR train"*) fail "session hook pointed at a train whose status is complete" ;;
+  *) pass "session hook is silent for a complete PR train" ;;
+esac
+
+printf -- '---\nstatus: complete\n---\n\nstatus: active\n' > "$PT_TRAIN"
+case "$(pt_hook d4 proj)" in
+  *"active PR train"*) fail "session hook read a status line from outside the front matter" ;;
+  *) pass "session hook only reads status inside the front matter" ;;
+esac
+
+case "$(pt_hook d5 bare)" in
+  *"active PR train"*) fail "session hook pointed at a train in a project with no handoff dir" ;;
+  *) pass "session hook is silent when there is no handoff dir" ;;
+esac
+
 if [ "$PT_ALONE" -eq 1 ]; then
   printf '\n'
   if [ "$FAIL" -eq 0 ]; then printf 'pr-train checks passed.\n'; else printf 'pr-train checks failed.\n'; fi

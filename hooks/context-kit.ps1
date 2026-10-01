@@ -245,8 +245,43 @@ function Invoke-Session {
     $notes += "context-kit: these procedures repeated $Threshold+ times and no skill covers them: $repeats. Capture the genuinely repeatable ones with the skill-capture skill."
   }
 
-  # "off" still gets the two notices above - only the ruleset itself is an
-  # opt-in. (Previously this whole function exited before either notice was
+  # Active PR train: a pointer and nothing more. The managed PR train section
+  # of CLAUDE.md already tells the session to read any train with
+  # "status: active", so this only makes the resume faster where the hook runs.
+  # It is not flagged once, so it fires again after every compaction, and it
+  # sits above the 'off' return below so it fires at any lean level. The status
+  # line counts only inside the front matter: the first line must be '---' and
+  # the scan stops at the next one. A missing directory or no match adds
+  # nothing. Same ASCII wording as the sh twin.
+  $handoffDir = Join-Path $Proj '.claude\handoff'
+  $train = $null
+  if (Test-Path -LiteralPath $handoffDir -PathType Container) {
+    foreach ($f in @(Get-ChildItem -LiteralPath $handoffDir -Filter '*.md' -File | Sort-Object Name)) {
+      if ($f.Length -eq 0) { continue }
+      $hit = $false
+      $reader = $null
+      try {
+        $reader = New-Object System.IO.StreamReader($f.FullName)
+        $first = $true
+        while ($null -ne ($line = $reader.ReadLine())) {
+          if ($first) {
+            $first = $false
+            if ($line -cmatch '^---\s*$') { continue }
+            break
+          }
+          if ($line -cmatch '^---\s*$') { break }
+          if ($line -cmatch '^status:\s*active\s*$') { $hit = $true; break }
+        }
+      } catch { } finally { if ($reader) { $reader.Dispose() } }
+      if ($hit) { $train = $f.Name; break }
+    }
+  }
+  if ($train) {
+    $notes += "context-kit: active PR train - read .claude/handoff/$train and continue from its next unchecked task."
+  }
+
+  # "off" still gets the notices above - only the ruleset itself is an
+  # opt-in. (Previously this whole function exited before any notice was
   # computed; README.md's "off leaves bootstrap and repeat detection in
   # place" was never actually true until this check moved down here.)
   if ($level -eq 'off') {
