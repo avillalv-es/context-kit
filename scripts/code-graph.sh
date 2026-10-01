@@ -191,6 +191,13 @@ if [ -f composer.json ]; then
 fi
 
 : > "$TMP/unresolved.tsv"
+# CODE_GRAPH_EXTRA_FILES names a file of paths that are not in the work tree
+# any more (blast-radius passes the deleted and renamed-away ones). They join
+# the set imports resolve against, so an importer of a deleted file still gets
+# its edge, but they are never scanned: src.txt is already fixed above.
+if [ -n "${CODE_GRAPH_EXTRA_FILES:-}" ] && [ -f "$CODE_GRAPH_EXTRA_FILES" ]; then
+  grep -vxF -f "$TMP/files.txt" "$CODE_GRAPH_EXTRA_FILES" >> "$TMP/files.txt" 2>/dev/null
+fi
 awk -f "$PLUGIN_ROOT/scripts/code-graph.awk" \
     -v filelist="$TMP/files.txt" \
     -v root="$ROOT" \
@@ -198,9 +205,21 @@ awk -f "$PLUGIN_ROOT/scripts/code-graph.awk" \
     -v aliases="$TMP/aliases.tsv" \
     -v unresolved="$TMP/unresolved.tsv" \
     < "$TMP/src.txt" > "$TMP/imports.tsv" 2> "$TMP/stats.txt"
+AWK_RC=$?
+if [ "$AWK_RC" -ne 0 ]; then
+  printf 'code-graph: the extractor failed (awk exit %s); the previous graph is untouched\n' "$AWK_RC" >&2
+  head -n 5 "$TMP/stats.txt" >&2
+  exit 1
+fi
 
-sort -u "$TMP/imports.tsv" > "$OUT/imports.tsv" 2>/dev/null || cp "$TMP/imports.tsv" "$OUT/imports.tsv"
-sort -u "$TMP/unresolved.tsv" > "$OUT/unresolved.tsv" 2>/dev/null || cp "$TMP/unresolved.tsv" "$OUT/unresolved.tsv"
+# Sorted into scratch files and renamed into place, so a reader never sees a
+# half-written graph and a failed sort leaves the previous one in force.
+sort -u "$TMP/imports.tsv" > "$TMP/imports.sorted" \
+  && sort -u "$TMP/unresolved.tsv" > "$TMP/unresolved.sorted" \
+  || { printf 'code-graph: could not sort the graph\n' >&2; exit 1; }
+mv -f "$TMP/imports.sorted" "$OUT/imports.tsv" \
+  && mv -f "$TMP/unresolved.sorted" "$OUT/unresolved.tsv" \
+  || { printf 'code-graph: could not write the graph to %s\n' "$OUT" >&2; exit 1; }
 
 if [ "$QUIET" -eq 0 ]; then
   NE="$(wc -l < "$OUT/imports.tsv" | tr -d ' ')"
