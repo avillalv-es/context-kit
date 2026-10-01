@@ -44,10 +44,32 @@ Create, without overwriting anything that exists:
 knowledge/.gitkeep
 knowledge/INDEX.md
 findings/.gitkeep
+findings/README.md
 ```
 
 `knowledge/INDEX.md` gets a heading and one line explaining that each entry is
-a topic file named for what someone would search for.
+a topic file named for what someone would search for. `findings/README.md` is
+a copy of `${CLAUDE_PLUGIN_ROOT}/templates/findings/README.md`, made only when
+it is absent, so the convention travels with the folder.
+
+### A2b — Initial ingest
+
+Whatever project markdown already exists (a root `PROGRESS.md`, `docs/`,
+notes, ideas) is where most of what this layout should hold is written, and
+nothing has read it yet. Run the `context-sync` skill now, in the
+**foreground**: spawn its routing subagent with `run_in_background: false` and
+wait for it. On a first run every source is `new`, so all of the root and
+`docs/` markdown is routed into `knowledge/`, `findings/`, `.claude/rules/` and
+`.claude/skills/`. Ignore any `sections` line it reports; A4 stamps those. When
+the routing is reviewed, record everything as routed:
+
+```
+sh "${CLAUDE_PLUGIN_ROOT}/scripts/context-sync.sh" mark --all
+```
+
+That also covers sources the router judged to be status chatter and left where
+they were. If `check` printed nothing there was no markdown, so skip this step.
+Keep the skill's one-line summary for A5.
 
 ### A3 — Write or adopt CLAUDE.md
 
@@ -115,6 +137,7 @@ If the user turned the section off, the script leaves it off.
 ### A5 — Report
 
 - What you created, as a file list, and what the A4 stamp did.
+- The A2b summary line: what was routed from existing markdown, and where.
 - `CLAUDE.md` line count.
 - If you adopted existing content, the table from Mode B phase 2 showing what
   moved where.

@@ -299,6 +299,38 @@ do_session() {
     fi
   fi
 
+  # Context sync: run the cheap first step of the context-sync skill here so
+  # the session can skip it. An accelerator only: the managed Context sync
+  # section of CLAUDE.md makes the session run the same check where this hook
+  # does not run. It needs a ledger, so a project that never synced is left to
+  # that section, and it is not claimed once because sources change between
+  # sessions. It sits above the "off" return below, so it fires at any lean
+  # level. Capped at 3s where timeout exists; a timeout or error adds nothing,
+  # and the session then runs the check itself.
+  SYNC="$ROOT/scripts/context-sync.sh"
+  if [ -f "$PROJ/.claude/context-sync.tsv" ] && [ -r "$SYNC" ]; then
+    if command -v timeout >/dev/null 2>&1; then
+      SYNC_OUT="$(timeout 3 sh "$SYNC" check --root "$PROJ" 2>/dev/null)"
+    else
+      SYNC_OUT="$(sh "$SYNC" check --root "$PROJ" 2>/dev/null)"
+    fi
+    SYNC_RC=$?
+    if [ "$SYNC_RC" -eq 0 ]; then
+      if [ -n "$SYNC_OUT" ]; then
+        NOTE="context-kit: context-sync check found work; go straight to step 2 of the context-sync skill with these lines:
+$SYNC_OUT"
+      else
+        NOTE="context-kit: context sources unchanged since last sync - skip the context-sync check this session."
+      fi
+      if [ -n "$OUT" ]; then
+        OUT="$OUT
+$NOTE"
+      else
+        OUT="$NOTE"
+      fi
+    fi
+  fi
+
   REPEATS="$(pending_repeats)"
   if [ -n "$REPEATS" ]; then
     NOTE="context-kit: these procedures repeated ${THRESHOLD}+ times and no skill covers them: ${REPEATS}. Capture the genuinely repeatable ones with the skill-capture skill."

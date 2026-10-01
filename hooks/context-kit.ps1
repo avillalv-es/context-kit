@@ -240,6 +240,29 @@ function Invoke-Session {
     }
   }
 
+  # Context sync: run the cheap first step of the context-sync skill here so
+  # the session can skip it. An accelerator only: the managed Context sync
+  # section of CLAUDE.md makes the session run the same check where this hook
+  # does not run. It needs a ledger, so a project that never synced is left to
+  # that section, and it is not flagged once because sources change between
+  # sessions. It sits above the 'off' return below, so it fires at any lean
+  # level. The same script the sh hook runs, so it needs an sh on PATH and is
+  # skipped quietly without one. Unlike the sh twin there is no 3s cap: the
+  # SessionStart timeout in hooks.json is the bound. An error adds nothing.
+  $syncSh = Join-Path $Root 'scripts\context-sync.sh'
+  if ((Test-Path -LiteralPath (Join-Path $Proj '.claude\context-sync.tsv')) -and (Test-Path -LiteralPath $syncSh) -and (Get-Command sh -ErrorAction SilentlyContinue)) {
+    $syncOut = & sh ($syncSh -replace '\\', '/') check --root ($Proj -replace '\\', '/') 2>$null
+    if ($LASTEXITCODE -eq 0) {
+      $syncLines = @($syncOut | ForEach-Object { "$_" } | Where-Object { $_ -ne '' })
+      if ($syncLines.Count) {
+        $syncJoined = $syncLines -join "`n"
+        $notes += "context-kit: context-sync check found work; go straight to step 2 of the context-sync skill with these lines:`n$syncJoined"
+      } else {
+        $notes += 'context-kit: context sources unchanged since last sync - skip the context-sync check this session.'
+      }
+    }
+  }
+
   $repeats = Get-PendingRepeats
   if ($repeats) {
     $notes += "context-kit: these procedures repeated $Threshold+ times and no skill covers them: $repeats. Capture the genuinely repeatable ones with the skill-capture skill."

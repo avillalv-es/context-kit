@@ -14,9 +14,13 @@ context-kit
     /context-init bootstrap  scaffold + stamp the managed sections, no survey
     /context-init off <s>    turn a managed CLAUDE.md section off (or: on <s>)
                              sections: context-layout, lean-execution,
-                             model-routing, pr-train
+                             model-routing, context-sync, pr-train
                              refreshed on re-run; edits inside the markers
                              are overwritten
+    /context-sync            route PROGRESS.md, docs/ and notes into the tiers
+    /context-sync off|on     turn the session-start sync off or on
+    /context-sync sources add <glob>|list
+                             extra markdown to treat as sources
     /context-graph           draw the layout; also `serve`, `vault`, `open`
     /context-graph --code    add the module import layer
     /context                 (built-in) the real context-window number

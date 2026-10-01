@@ -8,7 +8,7 @@
             "type": "command",
             "command": "sh",
             "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/context-kit.sh", "session"],
-            "timeout": 5
+            "timeout": 10
           }
         ]
       }

@@ -107,7 +107,8 @@ for f in hooks/context-kit.sh hooks/context-kit.ps1 hooks/rules.md knowledge/pla
          scripts/context-graph.sh scripts/context-graph.awk scripts/context-vault.awk \
          scripts/findings.sh scripts/findings.awk templates/graph/viewer.html \
          scripts/claude-sections.sh templates/sections/10-context-layout.md \
-         templates/sections/20-lean-execution.md skills/context-cleanup/references/mode-r-refresh.md; do
+         templates/sections/20-lean-execution.md skills/context-cleanup/references/mode-r-refresh.md \
+         scripts/context-sync.sh; do
   [ -f "$f" ] || fail "missing $f"
 done
 pass "referenced hook and script files present"
@@ -959,7 +960,7 @@ case "$(hk d3 off)" in
   *) pass "session skips the ruleset when lean-execution is off in CLAUDE.md" ;;
 esac
 TWIN=0
-for pat in 'claude-sections' 'context-kit:(begin|off) context-layout' 'context-kit:off lean-execution' '.claude/handoff' 'active PR train'; do
+for pat in 'claude-sections' 'context-kit:(begin|off) context-layout' 'context-kit:off lean-execution' '.claude/handoff' 'active PR train' 'context-sync.sh' 'unchanged since last sync' 'found work'; do
   grep -qF "$pat" hooks/context-kit.sh && grep -qF "$pat" hooks/context-kit.ps1 || { fail "sh and ps1 hooks differ on '$pat'"; TWIN=1; }
 done
 [ "$TWIN" -eq 0 ] && pass "sh and ps1 hooks carry the same managed-section checks"
