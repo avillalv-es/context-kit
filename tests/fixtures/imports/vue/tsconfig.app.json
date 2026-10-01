@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.base.json",
+  "include": ["env.d.ts", "src/**/*", "src/**/*.vue"],
+  "exclude": ["src/**/__tests__/*"],
+  "compilerOptions": {
+    // JSONC. A commented-out config is not a config:
+    // "paths": { "@ghost/*": ["./ghost/*"] }
+    "paths": {
+      "@/*": ["./src/*"]
+      /* , "@old/*": ["./src/old/*"] */
+    }
+  }
+}

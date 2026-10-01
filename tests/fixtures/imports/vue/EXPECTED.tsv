@@ -1,0 +1,34 @@
+# Expected import edges for the vue fixture.
+# from<TAB>to, one per line. scripts/check.sh asserts this set exactly:
+# a missing line is an edge the extractor stopped finding, an extra line
+# is an edge it invented. Both are regressions.
+#
+# The layout is what create-vue (Vite) generates: tsconfig.json holds only
+# `references`, the `@/*` alias lives in tsconfig.app.json, and Vite carries
+# its own alias list in vite.config.ts.
+#
+# Of the twelve edges below, only four are relative imports. The other eight
+# need an alias read from a config file:
+#   @/...    tsconfig.app.json  (and vite.config.ts, which repeats it)
+#   ~lib/... vite.config.ts only  (path.resolve form)
+#   ~/...    vite.config.ts only  (root-relative '/src' form)
+#
+# Edges that must NOT appear, and are therefore absent here:
+#   src/App.vue       -> src/components/Ghost.vue   (a comment and two strings)
+#   src/skipped.ts    -> src/api/client.ts          (@api: the value is a variable)
+#   src/skipped.ts    -> src/old/legacy.ts          (@old, @legacy: commented out)
+#
+# Regenerate deliberately, never reflexively - the point of the file is
+# that it does not move when the extractor changes.
+src/App.vue	src/components/UserCard.vue
+src/App.vue	src/components/index.ts
+src/components/StatusBadge.vue	src/lib/format.ts
+src/components/UserCard.vue	src/components/StatusBadge.vue
+src/components/UserCard.vue	src/stores/user.ts
+src/components/index.ts	src/components/StatusBadge.vue
+src/components/index.ts	src/components/UserCard.vue
+src/main.ts	src/App.vue
+src/main.ts	src/assets/main.css
+src/main.ts	src/stores/user.ts
+src/stores/user.ts	src/lib/format.ts
+src/stores/user.ts	src/types/user.ts
