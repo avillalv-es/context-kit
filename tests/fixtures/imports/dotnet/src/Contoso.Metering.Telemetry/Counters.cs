@@ -11,9 +11,9 @@ using Contoso.Metering.Compat.Tracing;
 namespace Telemetry;
 
 // 'namespace Telemetry;' declares the root namespace that
-// Api/TelemetryStartup.cs imports. The extractor never reads a namespace
-// DECLARATION, so its INFERRED edge for 'using Telemetry;' lands on
-// Storage/Telemetry.cs instead of here.
+// Api/TelemetryStartup.cs imports, so that using resolves to THIS file. The
+// same declaration is what 'using static Telemetry.Counters;' in
+// Storage/MeterSink.cs lands on, one segment up from the type.
 public sealed class Counters
 {
     public long Reads { get; set; }

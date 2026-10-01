@@ -6,7 +6,7 @@ namespace Contoso.Metering.Storage;
 /// A storage-side counter sink. Its FILE is named Telemetry.cs; its
 /// NAMESPACE is Contoso.Metering.Storage. Nothing here belongs to the root
 /// namespace 'Telemetry' that Api/TelemetryStartup.cs imports - the two are
-/// linked only by a basename coincidence.
+/// linked only by a basename coincidence, and this file draws no edge from it.
 /// </summary>
 public sealed class Telemetry
 {

@@ -4,9 +4,11 @@
 # -v filelist=    every file in the repo, one per line, repo-relative
 # -v root=        project root (absolute)
 # -v gomod=       the module path from go.mod, if any
-# -v aliases=     optional "prefix<TAB>target" lines from tsconfig/jsconfig paths
+# -v aliases=     optional "scope<TAB>key<TAB>target<TAB>wild<TAB>own" lines read
+#                 from tsconfig*/jsconfig*/vite.config.* and package.json "imports"
 # -v unresolved=  optional path to write dropped imports to
 # -v maxfan=      cap on edges from one import statement (default 40)
+# -v csfan=       cap on edges from one C# `using` (default 50)
 #
 # stdout: from<TAB>to<TAB>lang<TAB>form<TAB>confidence<TAB>line
 #
@@ -112,7 +114,7 @@ function exts_for(lang) {
 # strings have to be kept - a module specifier IS a string - so an unanchored
 # pattern like require(...) cannot tell a real call from one quoted inside a
 # template literal. The mask is how it tells.
-function decomment(line, lang,   i, n, c, c2, c3, out, q, rest, idx, t, tag) {
+function decomment(line, lang,   i, n, c, c2, c3, out, q, rest, idx, t, tag, j, closed) {
   out = ""
   strmask = ""
   n = length(line)
@@ -136,6 +138,18 @@ function decomment(line, lang,   i, n, c, c2, c3, out, q, rest, idx, t, tag) {
   } else if (blockstate == 4) {             # inside a Ruby =begin/=end block
     if (line ~ /^=end/) blockstate = 0
     return ""
+  } else if (blockstate == 5) {             # inside a C# verbatim string
+    j = 1; closed = 0
+    while (j <= n) {
+      if (substr(line, j, 1) == "\"") {
+        if (substr(line, j + 1, 1) == "\"") { j += 2; continue }
+        closed = 1; break
+      }
+      j++
+    }
+    if (!closed) return ""
+    blockstate = 0
+    i = j + 1
   } else {
     if (lang == "rb" && line ~ /^=begin/) { blockstate = 4; return "" }
     i = 1
@@ -158,8 +172,9 @@ function decomment(line, lang,   i, n, c, c2, c3, out, q, rest, idx, t, tag) {
     }
 
     # Triple-quoted block strings: Python docstrings, Java text blocks,
-    # Kotlin raw strings. A wrapped import line inside one is template data.
-    if ((lang == "py" || lang == "jvm") &&
+    # Kotlin raw strings, C# raw string literals. A wrapped import line
+    # inside one is template data.
+    if ((lang == "py" || lang == "jvm" || lang == "cs") &&
         (c3 == "\"\"\"" || (lang == "py" && c3 == "'''"))) {
       blockq = c3
       rest = substr(line, i + 3)
@@ -204,6 +219,30 @@ function decomment(line, lang,   i, n, c, c2, c3, out, q, rest, idx, t, tag) {
       if (substr(line, idx, 1) == "'" || substr(line, idx, 1) == "\"") idx++
       while (idx <= n && substr(line, idx, 1) ~ /[A-Za-z0-9_]/) { tag = tag substr(line, idx, 1); idx++ }
       if (tag != "") { blockq = tag; blockstate = 3; return out }
+    }
+
+    # C# verbatim string: @"..." and the interpolated $@"..." / @$"...". No
+    # backslash escapes, a doubled quote is an embedded quote, and it spans
+    # lines, so a line inside one can start in column zero looking like a
+    # `using` or a `namespace`.
+    if (lang == "cs" && (c2 == "@\"" || c3 == "$@\"" || c3 == "@$\"")) {
+      idx = i + ((c2 == "@\"") ? 2 : 3)
+      j = idx; closed = 0
+      while (j <= n) {
+        if (substr(line, j, 1) == "\"") {
+          if (substr(line, j + 1, 1) == "\"") { j += 2; continue }
+          closed = 1; break
+        }
+        j++
+      }
+      out = out substr(line, i, idx - i)
+      for (t = i; t < idx; t++) strmask = strmask "."
+      if (!closed) { blockstate = 5; return out }
+      out = out substr(line, idx, j - idx + 1)
+      for (t = idx; t < j; t++) strmask = strmask "S"
+      strmask = strmask "."
+      i = j + 1
+      continue
     }
 
     if (c2 == "/*" && (lang == "js" || lang == "c" || lang == "cs" || lang == "rs" ||
@@ -467,13 +506,9 @@ function resolve(from, lang, mod, form, lno,   d, i, n, P, base, hit, up, rest, 
     drop(from, mod, (ambiguous ? "ambiguous-name" : "external-or-jdk"), lno); return
   }
 
-  if (lang == "cs") {
-    base = mod
-    gsub(/\./, "/", base)
-    hit = try_suffix(base, "cs")
-    if (hit != "") { emit(from, hit, lang, form, "INFERRED", lno); return }
-    drop(from, mod, (ambiguous ? "ambiguous-name" : "using-is-a-namespace-not-a-file"), lno); return
-  }
+  # C# is not resolved here. `using X.Y;` names a namespace, not a file, so it
+  # cannot be settled until every namespace declaration in the repo has been
+  # read. scan() queues the usings and cs_resolve_all() settles them in END.
 
   if (lang == "proj") {
     base = norm(d "/" mod)
@@ -590,6 +625,159 @@ function resolve(from, lang, mod, form, lno,   d, i, n, P, base, hit, up, rest, 
   }
 }
 
+# --- C# namespaces -----------------------------------------------------------
+# A `using` names a NAMESPACE, never a file. Resolving it as a path (the old
+# unique-suffix match) produced edges by coincidence: `using Telemetry;` landed
+# on whichever file happened to be called Telemetry.cs, in a project the using
+# file never referenced. The honest link is namespace -> the files that DECLARE
+# it, which needs every declaration in the repo before any using can be
+# settled. So scan() records declarations and queues usings, and
+# cs_resolve_all() settles the queue in END.
+#
+# Matching is exact. `using A.B;` imports the types directly in A.B, not those
+# in A.B.C, so it never reaches a file that declares only A.B.C. Two things
+# are NOT modelled and are blind spots: a file sees the namespaces that
+# enclose its own without any `using`, and a `global using` reaches every file
+# of its project, not just the file that carries it.
+function ns_add(ns, f,   k) {
+  k = ns SUBSEP f
+  if (k in nsseen) return
+  nsseen[k] = 1
+  nsn[ns]++
+  nsfile[ns, nsn[ns]] = f
+}
+
+# One brace outside any string. The first "{" after a namespace line opens
+# that namespace; the "}" that brings the depth back to where it opened closes it.
+function cs_brace(c) {
+  if (c == "{") {
+    if (nspend != "") { nsp++; nsname[nsp] = nspend; nsdepth[nsp] = nsbrace; nspend = "" }
+    nsbrace++
+  } else {
+    nsbrace--
+    if (nsp > 0 && nsbrace == nsdepth[nsp]) nsp--
+  }
+}
+
+# Record a namespace declaration. Block namespaces nest, so the name is
+# qualified by the enclosing block, and brace depth is counted (never inside a
+# string, which strmask reports) only while one is open or its brace is awaited.
+# Most lines hold no brace and a string-free line needs no per-character walk,
+# which keeps a repo of old-style, fully braced C# from costing a pass per char.
+function cs_track(from, code,   m, rest, full, k, n, c, t) {
+  if (match(code, /^[ \t]*namespace[ \t]+[A-Za-z_][A-Za-z0-9_.]*/)) {
+    m = substr(code, RSTART, RLENGTH)
+    rest = substr(code, RSTART + RLENGTH)
+    sub(/^[ \t]*namespace[ \t]+/, "", m)
+    sub(/\.$/, "", m)
+    if (rest ~ /^[ \t]*;/) ns_add(m, from)                 # namespace X.Y;
+    else {                                                 # namespace X.Y { ... }
+      full = (nsp > 0) ? nsname[nsp] "." m : m
+      ns_add(full, from)
+      nspend = full                                        # opened at the next "{"
+    }
+  }
+  if ((nsp > 0 || nspend != "") && code ~ /[{}]/) {
+    if (strmask ~ /S/) {
+      n = length(code)
+      for (k = 1; k <= n; k++) {
+        c = substr(code, k, 1)
+        if ((c == "{" || c == "}") && substr(strmask, k, 1) != "S") cs_brace(c)
+      }
+    } else {
+      t = code
+      while (match(t, /[{}]/)) {
+        cs_brace(substr(t, RSTART, 1))
+        t = substr(t, RSTART + 1)
+      }
+    }
+  }
+  if (nsp == 0 && nspend == "") nsbrace = 0
+}
+
+# Queue one `using` directive. kind 0 = plain, 1 = alias target, 2 = static.
+function cs_using(from, code, lno,   m, kind, alias) {
+  m = code
+  sub(/^[ \t]*(global[ \t]+)?using[ \t]+/, "", m)
+  kind = 0; alias = 0
+  if (m ~ /^static[ \t]+/) { kind = 2; sub(/^static[ \t]+/, "", m) }
+  sub(/[ \t]*;.*$/, "", m)
+  # `using Alias = Target;` has an identifier directly before the "=". The
+  # disposal forms - `using (x)`, `using var x = ..`, `using T x = ..` - have
+  # something else there, and are statements, not imports.
+  if (kind == 0 && m ~ /^[A-Za-z_][A-Za-z0-9_]*[ \t]*=/) {
+    alias = 1; kind = 1
+    sub(/^[^=]*=/, "", m)
+  }
+  gsub(/[ \t]/, "", m)
+  sub(/^global::/, "", m)
+  if (alias) { gsub(/<[^>]*>/, "", m); gsub(/\[[^]]*\]/, "", m); sub(/\?$/, "", m) }
+  if (m !~ /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/) {
+    if (alias) drop(from, m, "using-alias-target-not-a-name", lno)
+    return
+  }
+  cs_n++
+  cs_from[cs_n] = from; cs_ns[cs_n] = m; cs_kind[cs_n] = kind; cs_lno[cs_n] = lno
+}
+
+# The csfan + 1 declaring files that sort first, computed once per namespace.
+# Past the cap, WHICH files an edge reaches must not depend on the order the
+# file list happened to arrive in, or two machines report different graphs.
+function ns_top(ns,   j, best, used, s) {
+  if (ns in ntop) return
+  split("", used)
+  for (s = 1; s <= csfan + 1; s++) {
+    best = 0
+    for (j = 1; j <= nsn[ns]; j++) {
+      if (j in used) continue
+      if (best == 0 || nsfile[ns, j] < nsfile[ns, best]) best = j
+    }
+    used[best] = 1
+    top[ns, s] = nsfile[ns, best]
+  }
+  ntop[ns] = csfan + 1
+}
+
+# Settle every queued using against the namespaces the repo declares.
+# A static using names a TYPE, and an alias may, so those may also match the
+# namespace one segment up (two for a static, to allow a nested type). A plain
+# using never does. At most csfan edges leave one using; past that the first
+# csfan files in path order get one and the rest are written to the
+# unresolved list, because a namespace that wide says little about any one file.
+function cs_resolve_all(   i, ns, maxdrop, drops, j, f, nemit, others, from, selfkey) {
+  for (i = 1; i <= cs_n; i++) {
+    from = cs_from[i]
+    ns = cs_ns[i]
+    maxdrop = (cs_kind[i] == 2) ? 2 : ((cs_kind[i] == 1) ? 1 : 0)
+    drops = 0
+    while (!(ns in nsn) && drops < maxdrop && ns ~ /\./) {
+      sub(/\.[^.]*$/, "", ns)
+      drops++
+    }
+    # Declared nowhere in this repo: System.*, Microsoft.*, a NuGet package.
+    if (!(ns in nsn)) { drop(from, cs_ns[i], "external-or-stdlib", cs_lno[i]); continue }
+    selfkey = ns SUBSEP from
+    others = nsn[ns] - ((selfkey in nsseen) ? 1 : 0)
+    nemit = 0
+    if (others <= csfan) {
+      for (j = 1; j <= nsn[ns]; j++) {
+        f = nsfile[ns, j]
+        if (f == from) continue
+        emit(from, f, "cs", "using-namespace", "INFERRED", cs_lno[i])
+      }
+    } else {
+      ns_top(ns)
+      for (j = 1; j <= ntop[ns] && nemit < csfan; j++) {
+        f = top[ns, j]
+        if (f == from) continue
+        emit(from, f, "cs", "using-namespace", "INFERRED", cs_lno[i])
+        nemit++
+      }
+      drop(from, cs_ns[i], "using-namespace-fanout-capped", cs_lno[i])
+    }
+  }
+}
+
 # --- extraction --------------------------------------------------------------
 # `re` is a STRING, never a /literal/. A regex literal in an argument position
 # is evaluated as ($0 ~ /literal/) and arrives here as 0 or 1, which then
@@ -636,11 +824,12 @@ function py_stmt(from, code, lno,   m, names, nn, NP, i, n, P, s) {
   }
 }
 
-function scan(from,   lang, line, lno, full, code, m, pend, i) {
+function scan(from,   lang, line, lno, full, code, m, pend, pendn, i) {
   lang = lang_of(extof(from))
   if (lang == "") return
   full = (from ~ /^\//) ? from : root "/" from
   blockstate = 0; blockq = ""; ingo = 0; prevjvm = ""; pyopen = ""
+  nsp = 0; nsbrace = 0; nspend = ""; pendn = 0
   lno = 0
   pend = ""
   while ((getline line < full) > 0) {
@@ -793,12 +982,16 @@ function scan(from,   lang, line, lno, full, code, m, pend, i) {
 
     if (lang == "cs") {
       if (code ~ /^[ \t]*(global[ \t]+)?using[ \t]/) {
-        m = code
-        sub(/^[ \t]*(global[ \t]+)?using[ \t]+(static[ \t]+)?/, "", m)
-        sub(/[ \t]*;.*$/, "", m); gsub(/[ \t]/, "", m)
-        if (m ~ /=/) sub(/^[^=]*=/, "", m)
-        if (m != "") resolve(from, lang, m, "using", lno)
+        # A directive wrapped across lines (`using Contoso` / `.Metering;`):
+        # join until the semicolon lands. A `(`, `{` or `=>` means this is a
+        # statement, which is never wrapped for the reason a directive is.
+        if (code !~ /[;({]/ && code !~ /=>/ && pendn < 6) { pend = code; pendn++; continue }
+        pendn = 0
+        cs_using(from, code, lno)
+        continue
       }
+      pendn = 0
+      cs_track(from, code)
       continue
     }
 
@@ -897,7 +1090,8 @@ function scan(from,   lang, line, lno, full, code, m, pend, i) {
 
 BEGIN {
   if (maxfan == "" || maxfan + 0 < 1) maxfan = 40
-  nedges = 0; ndropped = 0; nalias = 0; ncrate = 0
+  if (csfan == "" || csfan + 0 < 1) csfan = 50
+  nedges = 0; ndropped = 0; nalias = 0; ncrate = 0; cs_n = 0
 
   while ((getline line < filelist) > 0) {
     if (line == "") continue
@@ -939,6 +1133,9 @@ BEGIN {
 { if ($0 != "") scan($0) }
 
 END {
+  # Every namespace declaration is known now, so the queued usings can settle.
+  cs_resolve_all()
+
   # Header pairing: changing foo.h almost always means recompiling foo.c, and
   # no #include in either file says so.
   for (p in exact) {

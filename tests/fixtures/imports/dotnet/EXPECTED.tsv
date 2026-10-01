@@ -10,13 +10,43 @@
 #
 # Regenerate deliberately, never reflexively - the point of the file is
 # that it does not move when the extractor changes.
+#
+# C# edges. A `using` names a namespace, so each C# edge below runs from the
+# file with the using to every file that DECLARES that namespace; nothing is
+# matched on a file name. The csproj -> csproj edges are ProjectReferences.
+#
+# What the namespace edges deliberately do NOT include:
+#   TelemetryStartup.cs -> Storage/Telemetry.cs    a basename is not a namespace
+#   TelemetryStartup.cs -> Options.cs (either one) no namespace is called Options
+#   Bootstrap.cs        -> anything                Archived and Generated appear
+#                                                  only in a comment and a string
+#   anything            -> Core/Decoys.cs          the usings that name its
+#                                                  namespaces sit in comments and
+#                                                  string literals
+#   anything in System.*, Microsoft.*, Serilog, Newtonsoft.Json, Xunit
 src/Contoso.Metering.Api/Contoso.Metering.Api.csproj	src/Contoso.Metering.Abstractions/Contoso.Metering.Abstractions.csproj
 src/Contoso.Metering.Api/Contoso.Metering.Api.csproj	src/Contoso.Metering.Core/Contoso.Metering.Core.csproj
-src/Contoso.Metering.Api/TelemetryStartup.cs	src/Contoso.Metering.Storage/Telemetry.cs
+src/Contoso.Metering.Api/Program.cs	src/Contoso.Metering.Core/MeterReading.cs
+src/Contoso.Metering.Api/Program.cs	src/Contoso.Metering.Core/ReadingParser.cs
+src/Contoso.Metering.Api/ReadingsController.cs	src/Contoso.Metering.Abstractions/IMeterReader.cs
+src/Contoso.Metering.Api/ReadingsController.cs	src/Contoso.Metering.Abstractions/Units.cs
+src/Contoso.Metering.Api/ReadingsController.cs	src/Contoso.Metering.Core/MeterReading.cs
+src/Contoso.Metering.Api/ReadingsController.cs	src/Contoso.Metering.Core/ReadingParser.cs
+src/Contoso.Metering.Api/TelemetryStartup.cs	src/Contoso.Metering.Telemetry/Counters.cs
 src/Contoso.Metering.Core/Contoso.Metering.Core.csproj	src/Contoso.Metering.Abstractions/Contoso.Metering.Abstractions.csproj
+src/Contoso.Metering.Core/GlobalUsings.cs	src/Contoso.Metering.Abstractions/IMeterReader.cs
+src/Contoso.Metering.Core/GlobalUsings.cs	src/Contoso.Metering.Abstractions/Units.cs
+src/Contoso.Metering.Core/ReadingParser.cs	src/Contoso.Metering.Abstractions/IMeterReader.cs
+src/Contoso.Metering.Core/ReadingParser.cs	src/Contoso.Metering.Abstractions/Units.cs
 src/Contoso.Metering.Storage/Contoso.Metering.Storage.csproj	src/Contoso.Metering.Abstractions/Contoso.Metering.Abstractions.csproj
 src/Contoso.Metering.Storage/Contoso.Metering.Storage.csproj	src/Contoso.Metering.Core/Contoso.Metering.Core.csproj
+src/Contoso.Metering.Storage/MeterSink.cs	src/Contoso.Metering.Telemetry/Counters.cs
+src/Contoso.Metering.Storage/MeterSink.cs	src/Contoso.Metering.Telemetry/Options.cs
+src/Contoso.Metering.Storage/MultiLineUsings.cs	src/Contoso.Metering.Abstractions/IMeterReader.cs
+src/Contoso.Metering.Storage/MultiLineUsings.cs	src/Contoso.Metering.Abstractions/Units.cs
 src/Contoso.Metering.Telemetry/Contoso.Metering.Telemetry.csproj	src/Contoso.Metering.Abstractions/Contoso.Metering.Abstractions.csproj
 src/Contoso.Metering.Telemetry/Contoso.Metering.Telemetry.csproj	src/Contoso.Metering.Core/Contoso.Metering.Core.csproj
 tests/Contoso.Metering.Api.Tests/Contoso.Metering.Api.Tests.fsproj	src/Contoso.Metering.Api/Contoso.Metering.Api.csproj
 tests/Contoso.Metering.Core.Tests/Contoso.Metering.Core.Tests.csproj	src/Contoso.Metering.Core/Contoso.Metering.Core.csproj
+tests/Contoso.Metering.Core.Tests/ReadingParserTests.cs	src/Contoso.Metering.Core/MeterReading.cs
+tests/Contoso.Metering.Core.Tests/ReadingParserTests.cs	src/Contoso.Metering.Core/ReadingParser.cs
