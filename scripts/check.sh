@@ -749,8 +749,14 @@ fi
 # the script has to work without them.
 CS="$TMP/cs"; mkdir -p "$CS/data" 2>/dev/null
 # CONTEXT_KIT_LEVEL is cleared and the data dir is ours, so the developer's
-# own lean level cannot change what the stamped body should be.
-cs() { CONTEXT_KIT_LEVEL= CLAUDE_PLUGIN_DATA="$CS/data" sh scripts/claude-sections.sh "$@"; }
+# own lean level cannot change what the stamped body should be. The plugin
+# root is a copy holding only the two original sections, so a section file
+# added later (each feature tests its own in tests/checks/) cannot shift the
+# exact outputs asserted here.
+CSROOT="$CS/plugin"; mkdir -p "$CSROOT/templates/sections" "$CSROOT/hooks" 2>/dev/null
+cp templates/sections/10-context-layout.md templates/sections/20-lean-execution.md "$CSROOT/templates/sections/"
+cp hooks/rules.md "$CSROOT/hooks/"
+cs() { CLAUDE_PLUGIN_ROOT="$CSROOT" CONTEXT_KIT_LEVEL= CLAUDE_PLUGIN_DATA="$CS/data" sh scripts/claude-sections.sh "$@"; }
 
 # Fresh: a title-only file gets both sections, in order, one blank line apart.
 printf '# Fresh\n' > "$CS/fresh.md"
