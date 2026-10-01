@@ -13,7 +13,8 @@ context-kit
     /context-init cleanup    audit and rebalance; stops at a table first
     /context-init bootstrap  scaffold + stamp the managed sections, no survey
     /context-init off <s>    turn a managed CLAUDE.md section off (or: on <s>)
-                             sections: context-layout, lean-execution
+                             sections: context-layout, lean-execution,
+                             model-routing
                              refreshed on re-run; edits inside the markers
                              are overwritten
     /context-graph           draw the layout; also `serve`, `vault`, `open`
@@ -39,6 +40,7 @@ context-kit
     /lean full               the ladder enforced (default)
     /lean ultra              deletion before addition
     /lean off                no ruleset injected
+    /model-routing           show whether model routing is on; also on, off
 
   Tiers
     1  CLAUDE.md                     every session, always. Routing + the rare
