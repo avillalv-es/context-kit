@@ -271,12 +271,30 @@ do_session() {
   # session start turns a helpful hint into a nag.
   # The legacy flag file keeps an existing install from being re-offered on
   # upgrade; claim_once is what makes it safe when two sessions start at once.
+  # The layout counts as present from its heading, its begin marker (the form
+  # scripts/claude-sections.sh writes) or its off line.
   OFFERED="$DATA/state/$HASH.offered"
   if [ ! -f "$OFFERED" ]; then
-    if [ ! -f "$PROJ/CLAUDE.md" ] || ! grep -q '^## Context layout' "$PROJ/CLAUDE.md" 2>/dev/null; then
+    if [ ! -f "$PROJ/CLAUDE.md" ] || ! grep -Eq '^(## Context layout|<!-- context-kit:(begin|off) context-layout)' "$PROJ/CLAUDE.md" 2>/dev/null; then
       if claim_once offered; then
         OUT="context-kit: this project has no context layout yet. Use the context-cleanup skill in Mode 0 now - it scaffolds the layout and creates or appends the CLAUDE.md block - then carry on with whatever was asked."
         : > "$OFFERED" 2>/dev/null
+      fi
+    fi
+  fi
+
+  # Managed CLAUDE.md sections: once per plugin version per project, say when
+  # one is missing, outdated or still in its unmarked 0.4.x form. Skipped when
+  # the offer above already asked for the whole layout. The claim comes before
+  # the check, not after, so the steady state costs nothing; the check itself
+  # is a script run and this hook has a short timeout. Where a policy blocks
+  # hooks this never runs, and a manual /context-init does the same refresh.
+  if [ -z "$OUT" ] && [ -f "$PROJ/CLAUDE.md" ] && [ -r "$ROOT/scripts/claude-sections.sh" ]; then
+    VER="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/.claude-plugin/plugin.json" 2>/dev/null | head -1 | tr -cd 'A-Za-z0-9.-')"
+    if claim_once "sections-${VER:-unknown}"; then
+      STALE="$(sh "$ROOT/scripts/claude-sections.sh" status "$PROJ/CLAUDE.md" 2>/dev/null | awk '$1 != "ok" && $1 != "off" { printf "%s%s", (n++ ? ", " : ""), $2 }')"
+      if [ -n "$STALE" ]; then
+        OUT="context-kit: CLAUDE.md managed sections need a refresh ($STALE). Run /context-init."
       fi
     fi
   fi
@@ -304,8 +322,9 @@ $NOTE"
   # Bootstrap (context-cleanup Mode 0/A) stamps this same ruleset into
   # CLAUDE.md so it still applies where a managed policy blocks plugin hooks
   # outright. CLAUDE.md loads every session regardless, so re-injecting it
-  # here too would just double the tokens for everyone else.
-  if [ -f "$PROJ/CLAUDE.md" ] && grep -q '^## Lean execution' "$PROJ/CLAUDE.md" 2>/dev/null; then
+  # here too would just double the tokens for everyone else. A section turned
+  # off in CLAUDE.md (<!-- context-kit:off lean-execution -->) means the same.
+  if [ -f "$PROJ/CLAUDE.md" ] && grep -Eq '^(## Lean execution|<!-- context-kit:off lean-execution -->)' "$PROJ/CLAUDE.md" 2>/dev/null; then
     printf '%s\n' "$OUT" | emit SessionStart
   elif [ -n "$OUT" ]; then
     { printf '%s\n\n' "$OUT"; ruleset "$LEVEL"; } | emit SessionStart

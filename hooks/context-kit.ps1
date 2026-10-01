@@ -202,12 +202,41 @@ function Invoke-Session {
   $offered = Join-Path $Data "state\$Hash.offered"
   if (-not (Test-Path $offered)) {
     $claudeMd = Join-Path $Proj 'CLAUDE.md'
-    $hasMarker = (Test-Path $claudeMd) -and ((Get-Content $claudeMd) -match '^## Context layout')
+    # The layout counts as present from its heading, its begin marker (the form
+    # scripts/claude-sections.sh writes) or its off line.
+    $hasMarker = (Test-Path $claudeMd) -and ((Get-Content $claudeMd) -match '^(## Context layout|<!-- context-kit:(begin|off) context-layout)')
     if (-not $hasMarker) {
       $notes += 'context-kit: this project has no context layout yet. Use the context-cleanup skill in Mode 0 now - it scaffolds the layout and creates or appends the CLAUDE.md block - then carry on with whatever was asked.'
       $stateDir = Join-Path $Data 'state'
       if (-not (Test-Path $stateDir)) { New-Item -ItemType Directory -Force -Path $stateDir | Out-Null }
       New-Item -ItemType File -Force -Path $offered | Out-Null
+    }
+  }
+
+  # Managed CLAUDE.md sections: once per plugin version per project, say when
+  # one is missing, outdated or still in its unmarked 0.4.x form. Skipped when
+  # the offer above already asked for the whole layout. The flag is written
+  # before the check so the steady state costs nothing. The check is the same
+  # script the sh hook runs, so it needs an sh on PATH and is skipped quietly
+  # without one. Where a policy blocks hooks this never runs, and a manual
+  # /context-init does the same refresh.
+  $sectionsMd = Join-Path $Proj 'CLAUDE.md'
+  $sectionsSh = Join-Path $Root 'scripts\claude-sections.sh'
+  if ($notes.Count -eq 0 -and (Test-Path $sectionsMd) -and (Test-Path $sectionsSh) -and (Get-Command sh -ErrorAction SilentlyContinue)) {
+    $ver = ''
+    try { $ver = [string](Get-Content (Join-Path $Root '.claude-plugin\plugin.json') -Raw | ConvertFrom-Json).version } catch { }
+    $ver = $ver -replace '[^A-Za-z0-9.\-]', ''
+    if (-not $ver) { $ver = 'unknown' }
+    $flag = Join-Path $Data "state\$Hash.sections-$ver"
+    if (-not (Test-Path $flag)) {
+      $stateDir = Join-Path $Data 'state'
+      if (-not (Test-Path $stateDir)) { New-Item -ItemType Directory -Force -Path $stateDir | Out-Null }
+      New-Item -ItemType File -Force -Path $flag | Out-Null
+      $status = & sh ($sectionsSh -replace '\\', '/') status ($sectionsMd -replace '\\', '/') 2>$null
+      $stale = @($status | ForEach-Object { $p = "$_".Trim() -split ' '; if ($p.Count -ge 2 -and $p[0] -ne 'ok' -and $p[0] -ne 'off') { $p[1] } })
+      if ($stale.Count) {
+        $notes += "context-kit: CLAUDE.md managed sections need a refresh ($($stale -join ', ')). Run /context-init."
+      }
     }
   }
 
@@ -228,9 +257,10 @@ function Invoke-Session {
   # Bootstrap (context-cleanup Mode 0/A) stamps this same ruleset into
   # CLAUDE.md so it still applies where a managed policy blocks plugin hooks
   # outright. CLAUDE.md loads every session regardless, so re-injecting it
-  # here too would just double the tokens for everyone else.
+  # here too would just double the tokens for everyone else. A section turned
+  # off in CLAUDE.md (<!-- context-kit:off lean-execution -->) means the same.
   $claudeMdPath = Join-Path $Proj 'CLAUDE.md'
-  $hasRuleset = (Test-Path $claudeMdPath) -and ((Get-Content $claudeMdPath) -match '^## Lean execution')
+  $hasRuleset = (Test-Path $claudeMdPath) -and ((Get-Content $claudeMdPath) -match '^(## Lean execution|<!-- context-kit:off lean-execution -->)')
   if ($hasRuleset) {
     Write-HookOutput 'SessionStart' ($notes -join "`n")
     return

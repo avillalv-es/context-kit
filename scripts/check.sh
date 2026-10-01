@@ -105,7 +105,9 @@ pass "level filter keeps unconditional lines at every level"
 # --- 6. hooks.json references files that exist -----------------------------
 for f in hooks/context-kit.sh hooks/context-kit.ps1 hooks/rules.md knowledge/platform-native.md \
          scripts/context-graph.sh scripts/context-graph.awk scripts/context-vault.awk \
-         scripts/findings.sh scripts/findings.awk templates/graph/viewer.html; do
+         scripts/findings.sh scripts/findings.awk templates/graph/viewer.html \
+         scripts/claude-sections.sh templates/sections/10-context-layout.md \
+         templates/sections/20-lean-execution.md skills/context-cleanup/references/mode-r-refresh.md; do
   [ -f "$f" ] || fail "missing $f"
 done
 pass "referenced hook and script files present"
@@ -738,6 +740,223 @@ if [ -d "$DP/.git" ]; then
 else
   note "git unavailable - --diff mode untested"
 fi
+
+# --- 20. managed CLAUDE.md sections ----------------------------------------
+# claude-sections.sh is the only thing that writes the Context layout and Lean
+# execution sections, so "verbatim, never reworded" and "re-running refreshes
+# them" are properties of this script and are tested on it directly. Nothing
+# here goes through a hook: hooks are blocked by policy on some machines, and
+# the script has to work without them.
+CS="$TMP/cs"; mkdir -p "$CS/data" 2>/dev/null
+# CONTEXT_KIT_LEVEL is cleared and the data dir is ours, so the developer's
+# own lean level cannot change what the stamped body should be.
+cs() { CONTEXT_KIT_LEVEL= CLAUDE_PLUGIN_DATA="$CS/data" sh scripts/claude-sections.sh "$@"; }
+
+# Fresh: a title-only file gets both sections, in order, one blank line apart.
+printf '# Fresh\n' > "$CS/fresh.md"
+OUT=$(cs stamp "$CS/fresh.md" 2>&1)
+case "$OUT" in
+  *"stamped context-layout (added)"*"stamped lean-execution (added)"*) pass "stamp adds both sections to a title-only file" ;;
+  *) fail "stamp did not add both sections: $(printf '%s' "$OUT" | head -c 120)" ;;
+esac
+if awk '/^<!-- context-kit:begin lean-execution -->$/ { if (prev == "" && pprev == "<!-- context-kit:end context-layout -->") ok = 1 } { pprev = prev; prev = $0 } END { exit !ok }' "$CS/fresh.md"; then
+  pass "appended sections follow NN order, one blank line apart"
+else
+  fail "appended sections are out of order or not one blank line apart"
+fi
+# The text must be the template's, not a paraphrase.
+if grep -qF 'To reorganize any of it, run `/context-init cleanup`.' "$CS/fresh.md"; then
+  pass "the stamped Context layout ends with the cleanup pointer"
+else
+  fail "the stamped Context layout lost its last line"
+fi
+
+# Idempotent: nothing to do means no write, so cmp finds no difference.
+cp "$CS/fresh.md" "$CS/fresh.1"
+OUT=$(cs stamp "$CS/fresh.md" 2>&1)
+case "$OUT" in
+  *stamped*) fail "a second stamp still changed something: $OUT" ;;
+  "CLAUDE.md: "*" lines") if cmp -s "$CS/fresh.md" "$CS/fresh.1"; then pass "a second stamp is byte-identical and prints only the line count"; else fail "a second stamp rewrote the file"; fi ;;
+  *) fail "a second stamp printed more than the line count: $OUT" ;;
+esac
+
+# A 0.4.x file: the old stub (ending `/context-init`.), a user section between
+# the two blocks, and a Lean execution block built the way step A4b built it,
+# here with sed so it shares no code with the script under test.
+LEG="$CS/legacy.md"
+{
+  printf '# Legacy\n\nIntro the user wrote.\n\n'
+  printf '## Context layout\n\nThis project uses a three-tier layout. Do not add knowledge to this file on\n'
+  printf 'your own initiative. If something seems worth keeping, say so in one line and\nlet me decide.\n\n'
+  printf -- '- Conditional knowledge lives in `.claude/rules/` with `paths` frontmatter.\n'
+  printf -- '- Reference and procedures live in `knowledge/` and `.claude/skills/`.\n'
+  printf -- '- A procedure that repeats gets captured into `.claude/skills/`. Tell me in one\n  line after you create it; do not add it here.\n'
+  printf -- '- This file is capped at 200 lines.\n\nTo reorganize any of it, run `/context-init`.\n\n'
+  printf '## Mine\n\nA user section that must come through untouched.\n\n'
+  printf '## Lean execution\n\n'
+  tr -d '\r' < hooks/rules.md | sed '1,/^-->/d' | sed '1,2d' | sed -e '/^\[lite\]/d' -e '/^\[ultra\]/d' -e 's/^\[full\] *//'
+  printf '\nWhen spawning a subagent (Task/Agent tool), include this section'"'"'s content in its prompt.\n\n'
+  printf '## After\n\nAnother user section, after the blocks.\n'
+} > "$LEG"
+cp "$LEG" "$CS/legacy.orig"
+OUT=$(cs status "$LEG" 2>&1)
+case "$OUT" in
+  "legacy context-layout
+legacy lean-execution") pass "status recognises both 0.4.x blocks as legacy" ;;
+  *) fail "status misread a 0.4.x file: $OUT" ;;
+esac
+OUT=$(cs stamp "$LEG" 2>&1)
+case "$OUT" in
+  *"stamped context-layout (migrated)"*"stamped lean-execution (migrated)"*) pass "stamp migrates both 0.4.x blocks in place" ;;
+  *) fail "stamp did not migrate a 0.4.x file: $OUT" ;;
+esac
+# Take the markers back out and undo the one intended text change: what is
+# left must be the original file, user sections included, byte for byte.
+grep -v '^<!-- context-kit:' "$LEG" | sed 's/run `\/context-init cleanup`\./run `\/context-init`./' > "$CS/legacy.back"
+if cmp -s "$CS/legacy.back" "$CS/legacy.orig"; then
+  pass "a migrated file differs from the original only by markers and the new last line"
+else
+  fail "migration changed something besides the markers and the cleanup pointer"
+fi
+OUT=$(cs status "$LEG" 2>&1)
+case "$OUT" in
+  "ok context-layout
+ok lean-execution") pass "status reports ok after migration" ;;
+  *) fail "status after migration: $OUT" ;;
+esac
+cp "$LEG" "$CS/legacy.1"
+cs stamp "$LEG" >/dev/null 2>&1
+cmp -s "$LEG" "$CS/legacy.1" && pass "stamping a migrated file again changes nothing" || fail "a migrated file was rewritten on the next stamp"
+
+# Outdated: content-based, with no version numbers to compare.
+cp "$CS/fresh.md" "$CS/stale.md"
+sed -e 's/^- This file is capped at 200 lines\./- This file is capped at 999 lines./' -e 's/^Level full: .*/Level full: edited by hand/' "$CS/stale.md" > "$CS/stale.2" && cp "$CS/stale.2" "$CS/stale.md"
+OUT=$(cs status "$CS/stale.md" 2>&1)
+case "$OUT" in
+  "outdated context-layout
+outdated lean-execution") pass "status flags edited blocks as outdated" ;;
+  *) fail "status missed an edited block: $OUT" ;;
+esac
+OUT=$(cs stamp "$CS/stale.md" 2>&1)
+case "$OUT" in
+  *"stamped context-layout (updated)"*"stamped lean-execution (updated)"*) : ;;
+  *) fail "stamp did not update outdated blocks: $OUT" ;;
+esac
+cmp -s "$CS/stale.md" "$CS/fresh.1" && pass "stamp restores an outdated block in place" || fail "an outdated block was not restored exactly"
+
+# Off: respected by stamp, and `on` puts the block back where it was.
+cp "$CS/fresh.1" "$CS/off.md"
+cs off lean-execution "$CS/off.md" >/dev/null 2>&1
+if grep -qx '<!-- context-kit:off lean-execution -->' "$CS/off.md" && ! grep -q 'Lean execution' "$CS/off.md"; then
+  pass "off replaces a block with a single off line"
+else
+  fail "off did not replace the block with an off line"
+fi
+cp "$CS/off.md" "$CS/off.1"
+OUT=$(cs stamp "$CS/off.md" 2>&1)
+if cmp -s "$CS/off.md" "$CS/off.1" && [ "$(cs status "$CS/off.md" 2>&1 | tail -1)" = "off lean-execution" ]; then
+  pass "stamp leaves an off section off"
+else
+  fail "stamp touched an off section: $OUT"
+fi
+cs on lean-execution "$CS/off.md" >/dev/null 2>&1
+cmp -s "$CS/off.md" "$CS/fresh.1" && pass "on restores the section where it was" || fail "on did not restore the section"
+
+# A legacy block with no recognisable end is reported and never edited. It
+# also must not be added a second time beside the original.
+{ printf '# Odd\n\n## Lean execution\n\nOld text of unknown length.\n\n## Before writing code\n\nstuff\n\n## Other\n\nuser\n'; } > "$CS/odd.md"
+cp "$CS/odd.md" "$CS/odd.orig"
+OUT=$(cs status "$CS/odd.md" 2>&1)
+case "$OUT" in
+  *"legacy-unbounded lean-execution"*) pass "status reports an unbounded legacy block" ;;
+  *) fail "status did not report legacy-unbounded: $OUT" ;;
+esac
+OUT=$(cs stamp "$CS/odd.md" 2>/dev/null)
+ODDN=$(awk 'END { print NR }' "$CS/odd.orig")
+if [ "$(head -n "$ODDN" "$CS/odd.md" | cmp -s - "$CS/odd.orig" && echo same)" = "same" ] \
+   && [ "$(grep -c 'context-kit:begin lean-execution' "$CS/odd.md")" = "0" ]; then
+  pass "an unbounded legacy block is left untouched and not duplicated"
+else
+  fail "an unbounded legacy block was modified or duplicated"
+fi
+
+# CRLF in, CRLF out, and no bare LF anywhere.
+printf '# Win\r\n\r\nuser text\r\n' > "$CS/crlf.md"
+cs stamp "$CS/crlf.md" >/dev/null 2>&1
+NCR=$(tr -cd '\r' < "$CS/crlf.md" | wc -c | tr -d ' ')
+NNL=$(tr -cd '\n' < "$CS/crlf.md" | wc -c | tr -d ' ')
+if [ "$NCR" -gt 0 ] && [ "$NCR" = "$NNL" ]; then
+  pass "stamp keeps a CRLF file CRLF on every line"
+else
+  fail "stamp changed the line endings of a CRLF file (CR=$NCR LF=$NNL)"
+fi
+cp "$CS/crlf.md" "$CS/crlf.1"
+cs stamp "$CS/crlf.md" >/dev/null 2>&1
+cmp -s "$CS/crlf.md" "$CS/crlf.1" && pass "a CRLF file is stable under a second stamp" || fail "a CRLF file changed on the second stamp"
+
+# The cap warning, and its absence for a file well inside it.
+i=0; { printf '# Big\n\n'; while [ "$i" -lt 160 ]; do printf 'line %s\n' "$i"; i=$((i + 1)); done; } > "$CS/big.md"
+case "$(cs stamp "$CS/big.md" 2>&1)" in
+  *"over the 200-line cap"*) pass "stamp warns when CLAUDE.md passes 200 lines" ;;
+  *) fail "stamp did not warn about a file over 200 lines" ;;
+esac
+case "$(cs stamp "$CS/fresh.md" 2>&1)" in
+  *"over the 200-line cap"*) fail "stamp warned about a file inside the cap" ;;
+  *) pass "stamp does not warn inside the cap" ;;
+esac
+cs stamp "$CS/none.md" >/dev/null 2>&1
+[ $? -eq 1 ] && pass "stamp refuses a file that does not exist" || fail "stamp created or accepted a missing file"
+
+# The lean body is a port of the filter in the hook's ruleset(). Lift the
+# real function and compare, at every level, so the two cannot drift.
+sed -n '/^ruleset() {/,/^}$/p' hooks/context-kit.sh > "$TMP/rs.sh"
+RS_FAIL=0
+for L in lite full ultra; do
+  printf '# L\n' > "$CS/lvl.md"
+  cs stamp "$CS/lvl.md" --level "$L" >/dev/null 2>&1
+  GOT=$(awk '/^<!-- context-kit:begin lean-execution -->$/ { f = 1; next } /^<!-- context-kit:end lean-execution -->$/ { f = 0 } f { l[++n] = $0 } END { for (i = 1; i <= n - 2; i++) print (i == 1 ? substr(l[i], 2) : l[i]) }' "$CS/lvl.md")
+  WANT=$( . "$TMP/rs.sh"; RULES="$PWD/hooks/rules.md"; NATIVE="$TMP/no-such-file"; ruleset "$L" )
+  [ "$GOT" = "$WANT" ] || { fail "the stamped lean block at level $L differs from the hook's ruleset()"; RS_FAIL=1; }
+done
+[ "$RS_FAIL" -eq 0 ] && pass "the stamped lean block matches the hook's ruleset() at every level"
+
+# The stub text has exactly one home.
+COPIES=$(grep -rlF 'Do not add knowledge to this file' README.md commands skills docs templates hooks knowledge scripts 2>/dev/null | grep -v 'scripts/check.sh' | tr '\n' ' ')
+case "$COPIES" in
+  "templates/sections/10-context-layout.md ") pass "the Context layout text exists only in templates/sections/" ;;
+  *) fail "the Context layout text is duplicated outside templates/sections/: $COPIES" ;;
+esac
+
+# The hook only nudges; it must say so once per plugin version, count a begin
+# marker as the layout, and stay out of the way of a section turned off. Both
+# twins must carry the same checks.
+HK="$TMP/hk"; mkdir -p "$HK/legacy" "$HK/marker" "$HK/off" "$HK/d1" "$HK/d2" "$HK/d3"
+hk() { CLAUDE_PLUGIN_ROOT="$PWD" CLAUDE_PLUGIN_DATA="$HK/$1" CLAUDE_PROJECT_DIR="$HK/$2" sh hooks/context-kit.sh session 2>/dev/null; }
+cp "$CS/legacy.orig" "$HK/legacy/CLAUDE.md"
+case "$(hk d1 legacy)" in
+  *"managed sections need a refresh (context-layout, lean-execution)"*) pass "session names the sections that need a refresh" ;;
+  *) fail "session did not report a legacy CLAUDE.md" ;;
+esac
+case "$(hk d1 legacy)" in
+  *"need a refresh"*) fail "session repeated the refresh notice within one plugin version" ;;
+  *) pass "the refresh notice fires once per plugin version" ;;
+esac
+printf '# M\n\n<!-- context-kit:begin context-layout -->\ntext\n<!-- context-kit:end context-layout -->\n' > "$HK/marker/CLAUDE.md"
+case "$(hk d2 marker)" in
+  *"no context layout yet"*) fail "session did not accept the begin marker as the layout" ;;
+  *) pass "session accepts the begin marker as the layout" ;;
+esac
+cp "$CS/off.md" "$HK/off/CLAUDE.md"
+cs off lean-execution "$HK/off/CLAUDE.md" >/dev/null 2>&1
+case "$(hk d3 off)" in
+  *"Never simplify away"*) fail "session injected the ruleset although lean-execution is off" ;;
+  *) pass "session skips the ruleset when lean-execution is off in CLAUDE.md" ;;
+esac
+TWIN=0
+for pat in 'claude-sections' 'context-kit:(begin|off) context-layout' 'context-kit:off lean-execution'; do
+  grep -qF "$pat" hooks/context-kit.sh && grep -qF "$pat" hooks/context-kit.ps1 || { fail "sh and ps1 hooks differ on '$pat'"; TWIN=1; }
+done
+[ "$TWIN" -eq 0 ] && pass "sh and ps1 hooks carry the same managed-section checks"
 
 rm -rf "$TMP" 2>/dev/null
 

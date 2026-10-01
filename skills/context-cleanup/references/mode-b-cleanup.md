@@ -1,7 +1,16 @@
 # Mode B — Cleanup
 
-Read this only when Mode B is the mode. The layout already exists: audit it,
-show the user a table, and rebalance only after they agree.
+Read this only when Mode B is the mode (the `cleanup` argument). The layout
+already exists: audit it, show the user a table, and rebalance only after they
+agree.
+
+**Some of `CLAUDE.md` is not yours to classify.** The plugin owns everything
+between `<!-- context-kit:begin <id> -->` and its end marker, any unmarked
+`## Context layout` or `## Lean execution` block written by 0.4.x, and any
+`<!-- context-kit:off <id> -->` line. Skip all of it in B2, never propose
+moving, trimming or deleting it, and leave it alone in B4; the next
+`/context-init` rewrites it from the plugin anyway. It still counts toward the
+200-line cap, so in B1 report its line count apart from the rest.
 
 This is the step where knowledge gets silently lost, which is why B3 stops
 and does not proceed on implied approval.
@@ -11,7 +20,8 @@ and does not proceed on implied approval.
 ### B1 — Inventory
 
 Report, without editorializing:
-- `CLAUDE.md` line and character count, against the 200-line cap.
+- `CLAUDE.md` line and character count, against the 200-line cap, with the
+  managed lines (see above) counted separately.
 - Every file in `.claude/rules/`, its line count, and whether it has a `paths`
   field or loads unconditionally.
 - Every skill, with its description.
@@ -19,8 +29,8 @@ Report, without editorializing:
 
 ### B2 — Classify
 
-Apply the classification test to every line of `CLAUDE.md`. Present as a
-table: line or block, proposed tier, destination path, one-sentence reason.
+Apply the classification test to every line of `CLAUDE.md` outside the managed
+blocks. Present as a table: line or block, proposed tier, destination path, one-sentence reason.
 Mark rows decided by tie-break.
 
 Keep each reason to one line, in the form

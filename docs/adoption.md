@@ -15,7 +15,8 @@ Run `/context-init`. It selects **Mode A** and:
 2. **Scaffolds** `.claude/rules/`, `knowledge/` with an `INDEX.md`, and
    `findings/`.
 3. **Writes** a first `CLAUDE.md`, targeting under 100 lines.
-4. **Appends the stub** (below) that keeps the layout from re-accumulating.
+4. **Stamps the managed sections** (below), which keep the layout from
+   re-accumulating.
 5. **Reports** what it created, the line count, and anything that looked like a
    pitfall it could not confirm — so you can verify it rather than inherit a
    guess.
@@ -30,13 +31,27 @@ file is never overwritten.
 
 ## A repo that already has the layout
 
-Run `/context-init` again. It selects **Mode B** and audits: line counts against
-the cap, every rule and whether it has a `paths` field, every skill and its
-description, every knowledge file and whether the index lists it.
+Run `/context-init` again. It selects **Mode R**, a refresh, and touches only
+what the plugin owns:
+
+1. Creates any layout folder that has gone missing and overwrites nothing.
+2. Stamps the managed sections into `CLAUDE.md` (see below): adds the ones
+   that are missing, rewrites the outdated ones in place, and leaves alone any
+   you turned off.
+3. If `CLAUDE.md` holds nothing but those sections, because the hook
+   bootstrapped it, runs the survey Mode A would have run.
+
+Run it after a plugin update, and whenever a managed section looks stale.
+
+To audit instead, run `/context-init cleanup`. It selects **Mode B** and
+checks line counts against the cap, every rule and whether it has a `paths`
+field, every skill and its description, every knowledge file and whether the
+index lists it.
 
 Then it classifies, and **stops**. It shows you a table — line or block,
 proposed tier, destination, one-sentence reason, tie-breaks marked — and moves
-nothing until you approve. Approve a subset and only that subset moves.
+nothing until you approve. Approve a subset and only that subset moves. The
+managed sections are the plugin's, so it does not classify them.
 
 Run it when any of these is true:
 
@@ -47,31 +62,30 @@ Run it when any of these is true:
 
 ---
 
-## The stub
+## The managed sections
 
-Mode A appends this verbatim. It is the only thing standing between a clean
-layout and the same drift six months later:
+Mode A and Mode R stamp two sections into `CLAUDE.md`, each between
+`<!-- context-kit:begin <id> -->` and `<!-- context-kit:end <id> -->`. Claude
+Code strips those comments before loading the file, so the markers cost no
+tokens. The text is not written here and not by the model: it lives in
+`templates/sections/` (and, for Lean execution, is generated from
+`hooks/rules.md`), and `scripts/claude-sections.sh stamp CLAUDE.md` copies it
+in verbatim. A section is outdated when the text between its markers differs
+from what the plugin would write now, so a plugin update reaches every repo on
+its next `/context-init`. Edits inside the markers are overwritten; change the
+template instead.
 
-```markdown
-## Context layout
+To drop one, run `/context-init off <id>`: the block becomes a single
+`<!-- context-kit:off <id> -->` line that a refresh never re-adds, and
+`/context-init on <id>` puts it back.
 
-This project uses a three-tier layout. Do not add knowledge to this file on
-your own initiative. If something seems worth keeping, say so in one line and
-let me decide.
+The Context layout section is the one that keeps a clean layout from drifting
+back, and two of its clauses are easy to edit out by accident:
 
-- Conditional knowledge lives in `.claude/rules/` with `paths` frontmatter.
-- Reference and procedures live in `knowledge/` and `.claude/skills/`.
-- This file is capped at 200 lines.
-
-To reorganize any of it, run `/context-init`.
-```
-
-Two things make it work, and both are easy to edit out by accident:
-
-- **"Do not add knowledge to this file on your own initiative."** Without this,
-  every session that learns something appends a line, and the file grows
+- **The ban on adding knowledge on its own initiative.** Without it, every
+  session that learns something appends a line, and the file grows
   monotonically because nothing ever removes one.
-- **"say so in one line and let me decide."** This keeps the knowledge from
+- **"Say so in one line and let me decide."** This keeps the knowledge from
   being *lost* instead. The agent still surfaces what it learned; you just
   choose the tier. Drop this clause and you trade accumulation for amnesia.
 
@@ -98,7 +112,7 @@ next run does not re-derive the same dead end.
 
 ## Maintaining it
 
-**Quarterly, or after anything large:** run Mode B.
+**Quarterly, or after anything large:** run `/context-init cleanup` (Mode B).
 
 **When a tier-1 line proves stale:** that is the visible failure the downward
 tie-break is designed to produce. Fix the line, then ask whether it should have

@@ -1,8 +1,10 @@
 # Mode A — Initialize
 
 Read this only when Mode A is the mode. The repo has no `CLAUDE.md`, or one
-without a `## Context layout` section: scaffold the layout, survey the repo,
-and adopt whatever is already written into the right tier.
+with no context layout (no `## Context layout` heading and no `context-layout`
+marker): scaffold the layout, survey the repo, and adopt whatever is already
+written into the right tier. Mode R reuses A1 to A3 for a file that was only
+bootstrapped.
 
 ---
 
@@ -79,66 +81,40 @@ project history, or anything else derivable by looking.
 **If `CLAUDE.md` exists**, do not replace it. Run the Mode B classification
 pass over its current contents, then continue into A4.
 
-### A4 — Append the stub
-
-Append this to `CLAUDE.md` verbatim. Do not reword it, and do not summarize
-it. It is the only thing keeping the layout from re-accumulating between
-cleanups.
-
-```markdown
-## Context layout
-
-This project uses a three-tier layout. Do not add knowledge to this file on
-your own initiative. If something seems worth keeping, say so in one line and
-let me decide.
-
-- Conditional knowledge lives in `.claude/rules/` with `paths` frontmatter.
-- Reference and procedures live in `knowledge/` and `.claude/skills/`.
-- A procedure that repeats gets captured into `.claude/skills/`. Tell me in one
-  line after you create it; do not add it here.
-- This file is capped at 200 lines.
-
-To reorganize any of it, run `/context-init`.
-```
-
-### A4b — Append the ruleset stub
-
-`CLAUDE.md` loads every session regardless of whether hooks run, which makes
-it what keeps the lean-execution ruleset applying on a machine where a
-managed Claude Code policy blocks plugin hooks outright (`/hooks` reports
-"Hooks Restricted by Policy"). It costs nothing extra where hooks work
-normally: `do_session`/`Invoke-Session` checks for this same marker and skips
-re-injecting the ruleset once `CLAUDE.md` already carries it, so the two
-never double up.
-
-If `CLAUDE.md` already has a `## Lean execution` heading, skip this step.
-
-Otherwise, read `${CLAUDE_PLUGIN_ROOT}/hooks/rules.md`. Strip the leading
-HTML comment block. Keep every untagged line; for a line tagged
-`[lite]`/`[full]`/`[ultra]`, keep it only if its tag matches the current lean
-level (`full` if none is set). Append the result to `CLAUDE.md` under a
-`## Lean execution` heading — demote the source's own `# Lean execution` line
-to `##` so it nests correctly, otherwise verbatim. Do not reword it.
-
-Then append one more line after it, as part of the same stamped block (this
-is what makes the ruleset reach subagents too — `SubagentStart` is the only
-other place it was ever guaranteed to appear, and a subagent never reads
-`CLAUDE.md` on its own):
+### A4 — Stamp the managed sections
 
 ```
-When spawning a subagent (Task/Agent tool), include this section's content in its prompt.
+sh "${CLAUDE_PLUGIN_ROOT}/scripts/claude-sections.sh" stamp CLAUDE.md
 ```
 
-This costs a duplicate ~30 lines per subagent spawned on a machine where
-`SubagentStart` also fires normally — there's no reliable way for the
-orchestrating session to detect hook-liveness and skip one or the other, so
-this is accepted rather than solved. Far smaller than the session-level
-duplication risk above: it scales with subagents spawned, not with every
-session.
+This appends the Context layout section, then the Lean execution section (A4b),
+each between `context-kit` markers. Their text lives in
+`${CLAUDE_PLUGIN_ROOT}/templates/sections/`, and the script writes it
+verbatim; do not reword it, summarize it, or type it out yourself. The Context
+layout section is the only thing keeping the layout from re-accumulating
+between cleanups. Pass the script's output on in A5.
+
+### A4b — The Lean execution section, and why it is in `CLAUDE.md`
+
+The script builds this section from `${CLAUDE_PLUGIN_ROOT}/hooks/rules.md` at
+the current lean level (`--level lite|full|ultra` overrides it). `CLAUDE.md`
+loads every session whether or not hooks run, which makes it what keeps the
+ruleset applying where a managed Claude Code policy blocks plugin hooks
+outright (`/hooks` reports "Hooks Restricted by Policy"). It costs nothing
+extra where hooks work: `do_session`/`Invoke-Session` skips re-injecting the
+ruleset once `CLAUDE.md` carries it.
+
+The section ends with a line telling the orchestrating session to paste it into
+every subagent prompt, because a subagent never reads `CLAUDE.md` on its own.
+Where `SubagentStart` also fires that is the ruleset twice, about 30 lines per
+subagent. There is no reliable way to detect hook-liveness and skip one, so
+this is accepted.
+
+If the user turned the section off, the script leaves it off.
 
 ### A5 — Report
 
-- What you created, as a file list.
+- What you created, as a file list, and what the A4 stamp did.
 - `CLAUDE.md` line count.
 - If you adopted existing content, the table from Mode B phase 2 showing what
   moved where.
