@@ -82,16 +82,11 @@ Only what differs from a sensible guess. Full set: `docs/conventions.md`.
 - Findings from a long analysis run go in `findings/`, appended to a file, so
   they survive compaction.
 
-## Context layout
+<!--
+  No "Context layout" or "Lean execution" section here, on purpose: both are
+  plugin-owned. Their text lives in templates/sections/, and /context-init
+  stamps them at the end of CLAUDE.md between context-kit markers and keeps
+  them current. Without the plugin's command, this does the same:
+    sh scripts/claude-sections.sh stamp CLAUDE.md
+-->
 
-This project uses a three-tier layout. Do not add knowledge to this file on
-your own initiative. If something seems worth keeping, say so in one line and
-let me decide.
-
-- Conditional knowledge lives in `.claude/rules/` with `paths` frontmatter.
-- Reference and procedures live in `knowledge/` and `.claude/skills/`.
-- A procedure that repeats gets captured into `.claude/skills/`. Tell me in one
-  line after you create it; do not add it here.
-- This file is capped at 200 lines.
-
-To reorganize any of it, run `/context-init`.

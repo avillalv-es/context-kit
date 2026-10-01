@@ -13,7 +13,7 @@ after individual sessions. Nobody can say which lines still matter.
 anyone depends on it. So the ratchet only turns one way.
 
 **Fix:** a hard line cap, plus the "do not add on your own initiative" clause
-in the stub. The cap converts every addition into a trade.
+in the managed Context layout section. The cap converts every addition into a trade.
 
 ---
 

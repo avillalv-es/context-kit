@@ -37,11 +37,12 @@ for far longer.
 
 | | |
 |---|---|
-| **Bootstraps itself** | First session in a repo with no `## Context layout` block, Claude creates or appends one — as a visible diff you can decline. Offered once, then never again. |
+| **Bootstraps itself** | First session in a repo with no context layout, Claude creates or appends the managed `CLAUDE.md` sections — as a visible diff you can decline. Offered once, then never again. |
 | **Injects a lean ruleset** | ~30 lines into every session *and every subagent*: reuse before writing, locate before reading, answer before explaining. |
 | **Captures skills on its own** | Finish a procedure worth repeating and Claude writes `.claude/skills/<name>/SKILL.md` and tells you in one line. No permission prompt, no ceremony. |
 | **Detects repeats** | A silent ledger counts shell commands. Three runs of the same procedure with no skill covering it, and the next session says so. |
-| **Audits the layout** | `/context-init` classifies every line of `CLAUDE.md` and shows you a table before moving anything. |
+| **Keeps its sections current** | Re-running `/context-init` re-stamps the sections the plugin owns in `CLAUDE.md`, adding missing ones and rewriting outdated ones in place. |
+| **Audits the layout** | `/context-init cleanup` classifies every line of `CLAUDE.md` and shows you a table before moving anything. |
 | **Draws the layout** | `/context-graph` renders tiers, rules, skills and recorded agent activity as a graph you open in a browser, and names the rules that can never fire. |
 | **Remembers what was settled** | `/finding` logs a conclusion, a dead end or a correction; `reflect` aggregates them into `LESSONS.md` so a long investigation survives compaction. |
 | **Traces impact** | `/blast-radius --diff` walks the import graph backwards from everything you changed and lists what is downstream, ranked by distance, with a line to open in each file. |
@@ -163,7 +164,7 @@ working exactly as designed the moment it's allowed to run.
 | What the hook did | Fallback | How complete |
 |---|---|---|
 | `SessionStart`: offer to bootstrap a new project | Run `/context-init bootstrap` yourself | Full — already a documented manual path, hook or not |
-| `SessionStart` + `SubagentStart`: inject the ruleset | `context-cleanup` Mode 0/A stamps it into `CLAUDE.md` under `## Lean execution` (`references/mode-a-initialize.md`, step A4b) | Full for your main session — `CLAUDE.md` loads every session regardless of hooks, and `do_session`/`Invoke-Session` skip re-injecting it once that heading exists, so this costs nothing extra where hooks work normally |
+| `SessionStart` + `SubagentStart`: inject the ruleset | `context-cleanup` Mode 0/A/R stamps it into `CLAUDE.md` under `## Lean execution` (`scripts/claude-sections.sh`, `references/mode-a-initialize.md` step A4b) | Full for your main session — `CLAUDE.md` loads every session regardless of hooks, and `do_session`/`Invoke-Session` skip re-injecting it once that heading exists, so this costs nothing extra where hooks work normally |
 | `SubagentStart`: reach spawned subagents specifically | The same A4b stamp ends with an instruction telling the orchestrating session to paste that section into every subagent prompt it writes | Real, but compliance-based, not enforced — it works because Claude reads and follows it, not because anything guarantees it the way a hook does. Also: on a machine where `SubagentStart` *does* fire, a subagent gets the ruleset twice (hook + pasted prompt text) — there's no reliable way to detect hook-liveness and skip one, so this is accepted rather than solved |
 | `UserPromptSubmit`: persist a `/lean <level>` change | `/lean` now reads and writes the level file itself (`commands/lean.md`) instead of assuming the hook already did it, and re-stamps `CLAUDE.md` to match | Full for the documented `/lean lite\|full\|ultra\|off` command. Not covered: typing a bare phrase like "stop lean" with no `/lean` prefix — that whole-message detection has no equivalent, but the formal command reaches the same end state |
 | `PostToolUse`(Bash): count repeated commands, nudge `skill-capture` at 3+ | `skill-capture`'s SKILL.md now says to notice the same pattern in-context when no hook nudge is possible | Partial, by choice — session-scoped and best-effort, not a persistent cross-session count. The actual capture step is unaffected either way; only the automatic "you should look at this" prompt is weaker |
@@ -181,11 +182,13 @@ the cause of this failure mode.
 
 | Command | What it does |
 |---|---|
-| `/context-init` | Set up or rebalance the layout. Picks its own mode. |
+| `/context-init` | Set up the layout, or refresh it if it is there. Picks its own mode. |
+| `/context-init cleanup` | Audit and rebalance the layout. Stops at a table before moving anything. |
+| `/context-init off\|on <section>` | Turn a managed `CLAUDE.md` section off, or back on. |
 | `/context-graph` | Draw the layout. `serve` for a URL, `vault` for Obsidian notes. |
 | `/finding` | Record a finding; `/finding reflect` rolls them into `LESSONS.md`. |
 | `/blast-radius` | What breaks if this changes. `--diff`, a symbol, or `--file`. |
-| `/context-init bootstrap` | Scaffold and stamp the marker only. No survey. |
+| `/context-init bootstrap` | Scaffold and stamp the managed sections only. No survey. |
 | `/skill-capture` | Turn a repeatable procedure into a project skill. |
 | `/lean lite\|full\|ultra\|off` | Set the execution level. Persists across sessions. |
 | `/lean-review [--repo]` | What can be deleted. Diff by default, whole tree with `--repo`. |
@@ -194,12 +197,15 @@ the cause of this failure mode.
 
 `/context-init` picks its own mode:
 
-- **Mode 0 — Bootstrap.** Scaffold and stamp the marker. Cheap, idempotent, no
-  judgment. This is what the hook triggers automatically.
-- **Mode A — Initialize.** No `CLAUDE.md`, or one without a `## Context layout`
-  section. Surveys the repo and adopts existing content into the layout.
-- **Mode B — Cleanup.** The layout exists. Audits and rebalances it, including
-  `.claude/skills/`.
+- **Mode 0 — Bootstrap.** Scaffold and stamp the managed sections. Cheap,
+  idempotent, no judgment. This is what the hook triggers automatically.
+- **Mode A — Initialize.** No `CLAUDE.md`, or one with no context layout.
+  Surveys the repo and adopts existing content into the layout.
+- **Mode R — Refresh.** The layout exists. Stamps the managed sections up to
+  date, and surveys a `CLAUDE.md` that was only ever bootstrapped. This is
+  what a plain `/context-init` does on a repo that already has the layout.
+- **Mode B — Cleanup.** `/context-init cleanup`. Audits and rebalances the
+  layout, including `.claude/skills/`.
 
 Mode B **stops and shows you a table before moving anything**, and does not
 proceed on implied approval. That is deliberate: this is the step where
@@ -208,10 +214,29 @@ knowledge gets silently lost if you let it run unattended.
 Pass extra instructions straight through:
 
 ```
-/context-init only audit, do not propose moves yet
+/context-init cleanup only audit, do not propose moves yet
 ```
 
 Restart the session afterwards and run `/context` to see the real number.
+
+### Managed sections
+
+`/context-init` writes two sections into `CLAUDE.md`, Context layout and Lean
+execution, each between `<!-- context-kit:begin <id> -->` and
+`<!-- context-kit:end <id> -->` markers. Their text comes from the plugin
+(`templates/sections/`, and `hooks/rules.md` for Lean execution), copied in by
+`scripts/claude-sections.sh` rather than written by the model. Re-running
+`/context-init` refreshes them: missing sections are added, outdated ones are
+rewritten in place, and a block from an older version without markers is
+wrapped and upgraded. Anything you edit inside the markers is overwritten, so
+change what you want outside them. Claude Code strips the markers before it
+loads the file, so they cost no tokens.
+
+To turn one off, run `/context-init off <section>` (`context-layout` or
+`lean-execution`). The block becomes a single
+`<!-- context-kit:off <section> -->` line that a refresh never adds back, and
+`/context-init on <section>` restores it. `/context-init cleanup` treats
+managed blocks as the plugin's and does not touch them.
 
 ### Turning it off
 
@@ -245,8 +270,8 @@ permission to exist mostly does not get created.
 The cost is sprawl, so the filters do the work. It will not capture a one-off,
 anything derivable from the code, anything an existing skill covers, a bare
 single command, or anything it cannot write a trigger sentence for. It never
-writes to `~/.claude/skills/`, and it never commits. Pruning is `/context-init`
-Mode B, which audits skills for near-duplicates and capability-shaped
+writes to `~/.claude/skills/`, and it never commits. Pruning is `/context-init cleanup`
+(Mode B), which audits skills for near-duplicates and capability-shaped
 descriptions that will never fire.
 
 If the procedure needs a credential, it records the *name* of the variable and
@@ -481,8 +506,8 @@ context-kit/
 │   ├── shortcut-ledger.md       # /shortcut-ledger
 │   └── context-help.md          # /context-help
 ├── skills/
-│   ├── context-cleanup/         # the three-mode scaffold + audit skill
-│   │   └── references/          # modes A and B, loaded only when chosen
+│   ├── context-cleanup/         # the scaffold, refresh and audit skill
+│   │   └── references/          # modes A, R and B, loaded only when chosen
 │   ├── context-graph/           # reads graph.json and says what to cut
 │   ├── blast-radius/            # impact analysis, and how far to trust it
 │   ├── finding-ledger/          # the working log and its lessons
@@ -502,7 +527,8 @@ context-kit/
 │   ├── context-graph.awk        # the layout scanner and analyzer
 │   ├── context-vault.awk        # graph.json -> an Obsidian vault
 │   ├── findings.sh              # record | reflect
-│   └── findings.awk             # the deterministic lessons aggregator
+│   ├── findings.awk             # the deterministic lessons aggregator
+│   └── claude-sections.sh       # status | stamp | off | on: the managed CLAUDE.md sections
 ├── docs/
 │   ├── three-tier-model.md      # the model, and why it is shaped this way
 │   ├── context-graph.md         # what the graph holds and what it flags
@@ -515,6 +541,7 @@ context-kit/
 │   └── fixtures/imports/        # one per language, with its expected edges
 └── templates/
     ├── graph/viewer.html        # the offline, dependency-free graph viewer
+    ├── sections/                # the managed CLAUDE.md sections, one file each
     ├── CLAUDE.template.md       # a starting tier-1 file
     ├── rules/example-rule.md    # a tier-2 rule with correct frontmatter
     ├── knowledge/INDEX.md       # the tier-3 index

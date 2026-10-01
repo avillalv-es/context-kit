@@ -166,7 +166,7 @@ The cost is sprawl, so the filters are the whole job:
 - **No secrets.** If the procedure needs a credential, write the *name* of the
   variable and where it comes from, never the value.
 
-Pruning is `/context-init` Mode B, which now audits `.claude/skills/` for
+Pruning is `/context-init cleanup` (Mode B), which now audits `.claude/skills/` for
 near-duplicates, capability-shaped descriptions, and oversized bodies.
 
 ---
