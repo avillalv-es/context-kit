@@ -934,7 +934,7 @@ HK="$TMP/hk"; mkdir -p "$HK/legacy" "$HK/marker" "$HK/off" "$HK/d1" "$HK/d2" "$H
 hk() { CLAUDE_PLUGIN_ROOT="$PWD" CLAUDE_PLUGIN_DATA="$HK/$1" CLAUDE_PROJECT_DIR="$HK/$2" sh hooks/context-kit.sh session 2>/dev/null; }
 cp "$CS/legacy.orig" "$HK/legacy/CLAUDE.md"
 case "$(hk d1 legacy)" in
-  *"managed sections need a refresh (context-layout, lean-execution)"*) pass "session names the sections that need a refresh" ;;
+  *"managed sections need a refresh (context-layout, lean-execution"*) pass "session names the sections that need a refresh" ;;
   *) fail "session did not report a legacy CLAUDE.md" ;;
 esac
 case "$(hk d1 legacy)" in
@@ -957,6 +957,15 @@ for pat in 'claude-sections' 'context-kit:(begin|off) context-layout' 'context-k
   grep -qF "$pat" hooks/context-kit.sh && grep -qF "$pat" hooks/context-kit.ps1 || { fail "sh and ps1 hooks differ on '$pat'"; TWIN=1; }
 done
 [ "$TWIN" -eq 0 ] && pass "sh and ps1 hooks carry the same managed-section checks"
+
+# --- feature suites -----------------------------------------------------------
+# Each feature owns one file under tests/checks/, sourced here in name order,
+# so parallel work on separate features never edits this file. A suite uses
+# pass/fail/note and $TMP like the sections above, and cleans up nothing.
+for SUITE in tests/checks/*.sh; do
+  [ -f "$SUITE" ] || continue
+  . "./$SUITE"
+done
 
 rm -rf "$TMP" 2>/dev/null
 
