@@ -76,6 +76,11 @@ This is the largest input-token lever, and the one most often skipped.
   and only the conclusion comes back to yours.
 - **The bar for delegating is isolatable AND verbose.** Specialization alone is
   not sufficient reason. A three-file search costs more to delegate than to do.
+- **Delegated legwork runs on Sonnet; judgment stays with the decider.** Pass
+  `model: "sonnet"` for searches, research, coding to an agreed plan and test
+  runs. Planning, review verdicts and root-cause calls stay with the deciding
+  model (Opus). The Model routing section of CLAUDE.md carries this rule;
+  `/model-routing off` turns it off.
 - **Do not re-read what you just edited.** The edit tools error on failure;
   a confirming read buys nothing.
 
