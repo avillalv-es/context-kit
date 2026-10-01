@@ -6,7 +6,7 @@
   "plugins": [
     {
       "name": "context-kit",
-      "version": "0.7.0",
+      "version": "0.8.0",
       "description": "A three-tier context layout plus a lean execution ruleset: bootstraps CLAUDE.md on first session, captures repeatable procedures as skills automatically, and keeps every tier in the cheapest place that still fires.",
       "author": { "name": "avillalv-es" },
       "category": "productivity",
