@@ -1,96 +1,77 @@
 ---
 name: blast-radius
-description: Use when the user asks what breaks if something changes, what depends on a file or function, what the impact or blast radius of a change is, what else needs updating, or what a refactor will touch; when auditing or debugging and you need to know which files are downstream of a change; before renaming, deleting, or changing the signature of anything shared; and when reviewing a diff to find what it affects beyond the files it edits. Also use when the user runs /blast-radius. Do not use to find where something is defined - grep is faster and never stale.
+description: Use when the user asks what breaks if something changes, what depends on a file or function, what the impact or blast radius of a change is, or what else needs updating; before renaming, deleting, moving or changing the signature of anything shared; before committing a structural change; when reviewing a diff to find what it affects beyond the files it edits; and when the user runs /blast-radius. Do not use to find where something is defined - grep is faster and never stale.
 ---
 
 # Blast radius
 
-What depends on the thing about to change.
+Grep finds where a name appears. Only the import graph walked *backwards* says
+what depends on it, two and three files out. The script lists the importers;
+it cannot tell you whether each one breaks. **Reading them is your job, and it
+is the point of this skill.** A list you did not open proves nothing.
 
-Grep answers "where does this name appear". It cannot answer "what breaks",
-because that needs the import graph walked *backwards*, two and three files
-out, through re-exports and barrel files. That is the one question a plain
-search structurally cannot answer, and it is the whole reason this exists.
+## Procedure
 
-## Run it
+1. **Pick the mode.**
 
-```bash
-sh "${CLAUDE_PLUGIN_ROOT}/scripts/blast-radius.sh" <symbol>
-sh "${CLAUDE_PLUGIN_ROOT}/scripts/blast-radius.sh" --file src/lib/auth.ts
-sh "${CLAUDE_PLUGIN_ROOT}/scripts/blast-radius.sh" --diff
-sh "${CLAUDE_PLUGIN_ROOT}/scripts/blast-radius.sh" --diff --base main
-```
+   | About to... | Run |
+   |---|---|
+   | change, rename or delete one function, type or constant | `<symbol>`; add `--file <path>` when several files define that name |
+   | move, split, rename or delete a file | `--file <path>` |
+   | review or finish a change that is already made | `--diff`; `--diff --base main` for a whole branch |
 
-`--depth N` (default 3), `--max N` rows per depth, `--cached` to reuse the
-existing graph instead of rebuilding.
+2. **Run it:** `sh "${CLAUDE_PLUGIN_ROOT}/scripts/blast-radius.sh" <mode and arguments>`.
+   Options: `--depth N` (3), `--max N` rows per depth (40), `--cached` to skip
+   the graph rebuild. It rebuilds by default: a stale graph is worse than none.
+3. **Read the first line:** `blast-radius: seeds= affected= depth= edges= gaps=`.
+   `edges=0` means the graph is empty, not that nothing depends on the seed.
+   `gaps` above 0 means open `## Blind spots` before trusting the list.
+4. **Open every `## Depth 1` importer**, at its import line and at each use of
+   the names being changed. Give each a verdict:
+   - `breaks`: it will fail to compile, type-check or run as it stands
+   - `must-update`: it still works but has to change with this (a re-export, a copy of the type, a doc)
+   - `safe`: it only uses what stays the same
+   - `unclear`: say what you could not tell
 
-It rebuilds the import graph every run by default. That is deliberate: this
-tool's only value is being right, and a cached graph silently describing
-yesterday's imports is worse than no graph. Use `--cached` only in a tight
-loop where you know nothing moved.
+   With more than about 8 depth-1 importers, hand the reading to one subagent
+   (`model: "sonnet"`): give it the change, the importer list and these four
+   verdicts, and ask for a table of `file:line | verdict | one-line reason`.
+   Check the `breaks` and `unclear` rows yourself.
+5. **Follow depth 2 and beyond only through re-exports.** An importer that just
+   re-exports (a barrel, `index.ts`, `__init__.py`) passes the break on: read
+   *its* importers. Anything else past depth 1 is context.
+6. **Grep for runtime wiring** the graph cannot see: DI registration, route
+   tables, config keys, string lookups, reflection, templates, migrations.
+   `git grep -n -w <name>` in the repo, config and docs included.
+7. **Run `## Tests to run`** with the repo's own test command (see CLAUDE.md).
+   If CLAUDE.md says development is Docker-only, run them through `docker compose`.
+   If you cannot run them, say so; do not call the change safe.
+8. **Report:** the stats line, the verdict table, the tests run and how they
+   went, and one line of caveat. Do not paste the raw report back.
+9. **After editing, before committing, run `--diff` again.** What you changed is
+   not always what you planned, and `--diff` also seeds deleted and renamed files.
 
-## Which mode
+## What the report holds
 
-| Situation | Mode |
-|---|---|
-| auditing or debugging a change you already made | `--diff` — start here |
-| reviewing a branch | `--diff --base <branch>` |
-| about to rename, delete, or change a signature | the bare symbol |
-| about to move or split a file | `--file` |
+The first line is always the stats line. Then `##` sections, each printed only
+when non-empty (Seeds always): `Seeds`, `Depth 1`, `Depth 2`..., `Name matches`,
+`Tests to run`, `Blind spots`. A row is `path:line -> via`: that file imports
+`via` at that line. `[inferred import, verify]` means the edge came from an
+alias or suffix match rather than a literal path; open it. In symbol mode, rows
+are followed by the lines where the symbol is used.
 
-`--diff` is the one to reach for during an audit. It seeds from every changed
-file at once — unstaged, staged and untracked — so the answer is "here is
-everything downstream of this change", not one symbol at a time.
+`Name matches` are files that use the name with no import path to the seed:
+usually a different symbol with the same name. `Blind spots` are unresolved
+imports next to the seeds, plus "possible missed importers": an import that did
+not resolve but names a seed. Read those before concluding nothing else depends on it.
 
-## Reading the output
+Exit codes: `0` ok or nothing changed; `1` usage error, unknown `--base`, or the
+graph could not be built; `2` the symbol appears nowhere.
 
-Rows are grouped by depth. Depth 1 imports a seed directly; depth 2 imports
-something at depth 1. **Depth 1 is where breakage is near-certain; by depth 3
-you are looking at things that merely sit downstream.** Read outward and stop
-when it stops being plausible.
+## What it cannot see
 
-Three things in the report need care:
-
-**`[inferred import, verify]`.** The edge came from a path alias, a baseUrl
-specifier or a unique-suffix match rather than a literal relative path. It is
-usually right. Open the file before acting on it.
-
-**Name matches.** In symbol mode the report separately lists files where the
-name appears but no import connects them to the seed. Those are *usually a
-different symbol with the same name*. Never treat that section as part of the
-blast radius without reading each one.
-
-**Blind spots.** The count of imports that did not resolve. Read it. A high
-number in the area you are changing means the walk is incomplete there, and
-you should fall back to grep for that part.
-
-## What it cannot see, and what to do about it
-
-It is file-level: it follows imports, so it knows which file depends on which
-file. It does not know which *function* calls which function, and it cannot
-see anything wired at runtime:
-
-- a route table or URL map
-- a dependency-injection container
-- a plugin or handler registry keyed by string
-- reflection, `getattr`, dynamic `require` of a computed path
-- templates, config files and migrations that name a symbol in text
-
-So: **treat the result as a strong starting set, never a complete one.** When
-the thing you are changing is registered rather than imported — a handler, a
-serializer, a migration, a CLI subcommand — run a plain grep for its name as
-well, and say in your answer that you did both.
-
-If the report says nothing imports the seed, that is three different
-statements — a genuine leaf, a runtime-wired module, or a resolution gap.
-The report distinguishes them. Pass that distinction on rather than reporting
-"nothing depends on it".
-
-## Reporting
-
-Lead with the count and the depth-1 list, because that is what the user acts
-on. Then anything at depth 2+ that looks genuinely at risk. Then the caveats,
-in one line, not a lecture.
-
-Do not paste the whole report back. It is written to be read by you, and
-summarized by you.
+It follows imports between files. It does not know which function calls which,
+and it cannot see anything wired at runtime. "Nothing imports the seed" is three
+different statements: a real leaf, a runtime-wired module, or an import form
+that did not resolve. Say which one you believe, and why. Details and how to
+read `Blind spots`: `references/reading-output.md`.
