@@ -192,6 +192,7 @@ the cause of this failure mode.
 | `/skill-capture` | Turn a repeatable procedure into a project skill. |
 | `/lean lite\|full\|ultra\|off` | Set the execution level. Persists across sessions. |
 | `/lean-review [--repo]` | What can be deleted. Diff by default, whole tree with `--repo`. |
+| `/model-routing [on\|off]` | Turn the Model routing section of `CLAUDE.md` on or off; no argument shows its state. |
 | `/shortcut-ledger` | Every deliberate shortcut marked in this repo. |
 | `/context-help` | The reference card. |
 
@@ -221,22 +222,39 @@ Restart the session afterwards and run `/context` to see the real number.
 
 ### Managed sections
 
-`/context-init` writes two sections into `CLAUDE.md`, Context layout and Lean
-execution, each between `<!-- context-kit:begin <id> -->` and
-`<!-- context-kit:end <id> -->` markers. Their text comes from the plugin
-(`templates/sections/`, and `hooks/rules.md` for Lean execution), copied in by
-`scripts/claude-sections.sh` rather than written by the model. Re-running
-`/context-init` refreshes them: missing sections are added, outdated ones are
-rewritten in place, and a block from an older version without markers is
-wrapped and upgraded. Anything you edit inside the markers is overwritten, so
-change what you want outside them. Claude Code strips the markers before it
-loads the file, so they cost no tokens.
+`/context-init` writes these sections into `CLAUDE.md`, each between
+`<!-- context-kit:begin <id> -->` and `<!-- context-kit:end <id> -->` markers:
 
-To turn one off, run `/context-init off <section>` (`context-layout` or
-`lean-execution`). The block becomes a single
-`<!-- context-kit:off <section> -->` line that a refresh never adds back, and
-`/context-init on <section>` restores it. `/context-init cleanup` treats
-managed blocks as the plugin's and does not touch them.
+| Id | Section |
+|---|---|
+| `context-layout` | Context layout |
+| `lean-execution` | Lean execution |
+| `model-routing` | Model routing |
+
+Their text comes from the plugin (`templates/sections/`, and `hooks/rules.md`
+for Lean execution), copied in by `scripts/claude-sections.sh` rather than
+written by the model. Re-running `/context-init` refreshes them: missing
+sections are added, outdated ones are rewritten in place, and a block from an
+older version without markers is wrapped and upgraded. Anything you edit inside
+the markers is overwritten, so change what you want outside them. Claude Code
+strips the markers before it loads the file, so they cost no tokens.
+
+To turn one off, run `/context-init off <section>` with one of the ids above.
+The block becomes a single `<!-- context-kit:off <section> -->` line that a
+refresh never adds back, and `/context-init on <section>` restores it.
+`/context-init cleanup` treats managed blocks as the plugin's and does not
+touch them.
+
+### Model routing
+
+The Model routing section tells the session to decide and to send the legwork
+to subagents, passing `model` on every Agent call. Sonnet (always the latest)
+explores, searches, researches, codes to an agreed plan, writes markdown and
+runs tests. Opus plans, makes architecture and trade-off calls, gives review
+verdicts and judges root causes; a session not running Opus sends those to an
+Opus subagent. A model your organization restricts is never used. It is
+stamped like the other managed sections; `/model-routing off` turns it off and
+`/model-routing on` brings it back.
 
 ### Turning it off
 
@@ -503,6 +521,7 @@ context-kit/
 │   ├── skill-capture.md         # /skill-capture
 │   ├── lean.md                  # /lean
 │   ├── lean-review.md           # /lean-review
+│   ├── model-routing.md         # /model-routing
 │   ├── shortcut-ledger.md       # /shortcut-ledger
 │   └── context-help.md          # /context-help
 ├── skills/
@@ -538,6 +557,7 @@ context-kit/
 │   ├── adoption.md              # rolling it into a repo that already exists
 │   └── anti-patterns.md         # the failure modes, and what they look like
 ├── tests/
+│   ├── checks/                  # per-feature suites sourced by check.sh
 │   └── fixtures/imports/        # one per language, with its expected edges
 └── templates/
     ├── graph/viewer.html        # the offline, dependency-free graph viewer
