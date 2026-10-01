@@ -296,6 +296,35 @@ for SY_F in skills/context-sync/references/routing.md commands/context-sync.md; 
   [ -f "$SY_F" ] || fail "missing $SY_F"
 done
 
+# --- the session hook runs the check (an accelerator) ---------------------------------
+# The CLAUDE.md section is what makes a session sync; the hook only saves the
+# step. With a ledger it says nothing changed or hands over the check's lines,
+# and without one it stays out of the way.
+sy_hook() { CLAUDE_PLUGIN_ROOT="$SY_PLUGIN" CLAUDE_PLUGIN_DATA="$SY_W/hk$1" CLAUDE_PROJECT_DIR="$2" sh "$SY_PLUGIN/hooks/context-kit.sh" session 2>/dev/null; }
+
+SY_HK="$(sy_hook 1 "$SY_R")"
+case "$SY_HK" in
+  *"unchanged since last sync"*) pass "session hook says the sources are unchanged when the ledger is current" ;;
+  *) fail "session hook did not report unchanged sources for a current ledger" ;;
+esac
+
+printf 'appended BETA line\n' >> "$SY_R/PROGRESS.md"
+SY_HK="$(sy_hook 2 "$SY_R")"
+case "$SY_HK" in
+  *"found work"*"source changed"*) pass "session hook hands the session the check's lines when a source changed" ;;
+  *) fail "session hook did not report the changed source" ;;
+esac
+sy mark PROGRESS.md >/dev/null
+
+SY_NL="$SY_W/noledger"
+mkdir -p "$SY_NL"
+printf '# Scratch\n' > "$SY_NL/CLAUDE.md"
+SY_HK="$(sy_hook 3 "$SY_NL")"
+case "$SY_HK" in
+  *"unchanged since last sync"*|*"found work"*) fail "session hook ran the sync check in a project with no ledger" ;;
+  *) pass "session hook leaves a project with no ledger to the CLAUDE.md section" ;;
+esac
+
 if [ "$SY_ALONE" -eq 1 ]; then
   printf '\n'
   if [ "$FAIL" -eq 0 ]; then printf 'All context-sync checks passed.\n'; else printf 'Context-sync checks failed.\n'; fi
