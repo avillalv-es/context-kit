@@ -187,6 +187,7 @@ the cause of this failure mode.
 | `/context-init off\|on <section>` | Turn a managed `CLAUDE.md` section off, or back on. |
 | `/context-graph` | Draw the layout. `serve` for a URL, `vault` for Obsidian notes. |
 | `/finding` | Record a finding; `/finding reflect` rolls them into `LESSONS.md`. |
+| `/pr-train [status\|off\|on]` | Split a plan of several PR-sized asks into a PR train, resume an active one, or turn the `CLAUDE.md` section off or on. |
 | `/blast-radius` | What breaks if this changes. `--diff`, a symbol, or `--file`. |
 | `/context-init bootstrap` | Scaffold and stamp the managed sections only. No survey. |
 | `/skill-capture` | Turn a repeatable procedure into a project skill. |
@@ -230,6 +231,7 @@ Restart the session afterwards and run `/context` to see the real number.
 | `context-layout` | Context layout |
 | `lean-execution` | Lean execution |
 | `model-routing` | Model routing |
+| `pr-train` | PR train |
 
 Their text comes from the plugin (`templates/sections/`, and `hooks/rules.md`
 for Lean execution), copied in by `scripts/claude-sections.sh` rather than
@@ -255,6 +257,27 @@ verdicts and judges root causes; a session not running Opus sends those to an
 Opus subagent. A model your organization restricts is never used. It is
 stamped like the other managed sections; `/model-routing off` turns it off and
 `/model-routing on` brings it back.
+
+### PR trains
+
+When an agreed plan holds two or more asks that would each be reviewed as
+their own PR (a UI change plus a roles change, say), the `pr-train` skill
+runs them as a train: one branch and one PR per task, built in dependency
+order. State lives in a temporary file, `.claude/handoff/<slug>.md`, written
+from `templates/handoff.md`. The directory carries its own `.gitignore` of
+`*`, so it is never committed. The file records the goal, the repo's PR
+conventions, a task checklist, a done log and mid-task state. Tasks whose
+files don't overlap are built at the same time by subagents in isolated git
+worktrees. Shared files (README, changelog, version manifests, lockfiles,
+indexes) are applied afterwards, in task order, so branches never conflict.
+After each PR or parallel batch, Claude updates the train file and asks you
+to run `/compact`; it cannot compact itself. Resume needs no hook: the
+managed PR train section of `CLAUDE.md` reloads after compaction and tells
+the next session to read any train with `status: active` and continue from
+its next unchecked task. Where the plugin's hooks run, the session-start hook
+also points at the active train file; that is only a shortcut.
+`/pr-train status` shows the task list. `/pr-train off` and `/pr-train on`
+toggle the section.
 
 ### Turning it off
 
@@ -522,6 +545,7 @@ context-kit/
 │   ├── lean.md                  # /lean
 │   ├── lean-review.md           # /lean-review
 │   ├── model-routing.md         # /model-routing
+│   ├── pr-train.md              # /pr-train
 │   ├── shortcut-ledger.md       # /shortcut-ledger
 │   └── context-help.md          # /context-help
 ├── skills/
@@ -533,6 +557,8 @@ context-kit/
 │   ├── skill-capture/           # writes new skills
 │   ├── lean-execution/          # the long-form ruleset
 │   ├── lean-review/             # what can be deleted
+│   ├── pr-train/                # split a plan into PRs, resume across /compact
+│   │   └── references/          # the parallel-lane prompt, loaded only for a batch
 │   └── shortcut-ledger/         # the debt ledger
 ├── knowledge/
 │   └── platform-native.md       # tier-3 reference, loads on lookup only
@@ -563,6 +589,7 @@ context-kit/
     ├── graph/viewer.html        # the offline, dependency-free graph viewer
     ├── sections/                # the managed CLAUDE.md sections, one file each
     ├── CLAUDE.template.md       # a starting tier-1 file
+    ├── handoff.md               # the PR train file, copied to .claude/handoff/
     ├── rules/example-rule.md    # a tier-2 rule with correct frontmatter
     ├── knowledge/INDEX.md       # the tier-3 index
     └── findings/README.md       # the compaction-survival convention
