@@ -14,7 +14,7 @@ context-kit
     /context-init bootstrap  scaffold + stamp the managed sections, no survey
     /context-init off <s>    turn a managed CLAUDE.md section off (or: on <s>)
                              sections: context-layout, lean-execution,
-                             model-routing
+                             model-routing, pr-train
                              refreshed on re-run; edits inside the markers
                              are overwritten
     /context-graph           draw the layout; also `serve`, `vault`, `open`
@@ -34,6 +34,12 @@ context-kit
   Findings
     /finding                 record what you just settled, or a dead end
     /finding reflect         roll every entry into findings/LESSONS.md
+
+  PR train
+    /pr-train                split the agreed plan into PRs, or resume the
+                             active train in .claude/handoff/
+    /pr-train status         show the train's task list
+    /pr-train off|on         turn the CLAUDE.md section off or on
 
   Lean execution
     /lean lite               build it, then name the leaner option in one line

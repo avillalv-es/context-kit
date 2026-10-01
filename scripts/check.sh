@@ -959,7 +959,7 @@ case "$(hk d3 off)" in
   *) pass "session skips the ruleset when lean-execution is off in CLAUDE.md" ;;
 esac
 TWIN=0
-for pat in 'claude-sections' 'context-kit:(begin|off) context-layout' 'context-kit:off lean-execution'; do
+for pat in 'claude-sections' 'context-kit:(begin|off) context-layout' 'context-kit:off lean-execution' '.claude/handoff' 'active PR train'; do
   grep -qF "$pat" hooks/context-kit.sh && grep -qF "$pat" hooks/context-kit.ps1 || { fail "sh and ps1 hooks differ on '$pat'"; TWIN=1; }
 done
 [ "$TWIN" -eq 0 ] && pass "sh and ps1 hooks carry the same managed-section checks"
