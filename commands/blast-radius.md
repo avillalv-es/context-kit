@@ -2,17 +2,19 @@
 description: What breaks if this changes - trace importers of a symbol, a file, or the current diff
 ---
 
-Use the `blast-radius` skill.
+Use the `blast-radius` skill, and follow its procedure: open every depth-1
+importer and give it a verdict. Do not stop at the list.
 
-Recognised arguments:
+Pick the mode from the argument:
 
-- a bare symbol name — trace what depends on that function, class or constant
-- `--file <path>` — trace what depends on that file
-- `--diff` — trace everything changed in the working tree (the audit case)
-- `--diff --base main` — trace everything changed against a branch
-- `--depth N`, `--max N`, `--cached` — passed straight through
+- no argument: `--diff`, everything changed in the working tree
+- an existing path, or anything with a `/` or a file extension (`src/lib/auth.ts`): `--file <path>`
+- anything else (`verifySignature`): a symbol
+- `--diff --base main`: everything changed since branching from `main`
+- `<symbol> --file <path>`: the symbol as defined in that one file
+- `--depth N`, `--max N`, `--cached`: passed straight through
 
-Report the affected set. Change nothing unless asked, and say plainly which
-rows are resolved imports and which are name matches.
+Change nothing unless asked. Say plainly which rows are resolved imports and
+which are name matches.
 
-Target, or the mode: $ARGUMENTS
+Argument, or the mode: $ARGUMENTS

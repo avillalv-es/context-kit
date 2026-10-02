@@ -35,29 +35,61 @@ you are going to open the file regardless.
 ## Modes
 
 ```bash
-/blast-radius --diff                 # everything changed in the working tree
-/blast-radius --diff --base main     # everything changed against a branch
+/blast-radius                        # no argument: everything changed in the working tree
+/blast-radius --diff --base main     # everything changed since branching from main
 /blast-radius verifySignature        # a symbol
-/blast-radius --file src/lib/auth.ts # a file
+/blast-radius verifySignature --file src/lib/auth.ts  # ...as defined in that file
+/blast-radius src/lib/auth.ts        # a path means --file
 ```
 
 `--diff` is the one for audits and debugging. It seeds from every changed
-file at once — unstaged, staged **and untracked** — so the answer is "here is
-everything downstream of this change". A new file is the most common thing an
-audit adds, and `git diff` alone never mentions it.
+file at once, so the answer is "here is everything downstream of this change".
+It covers:
+
+- **unstaged, staged and untracked** work. A new file is the most common thing
+  an audit adds, and `git diff` alone never mentions it.
+- **deleted files and the old path of a rename**, tagged `[deleted]` and
+  `[renamed to ...]`. Deleting or moving is exactly when importers break, so
+  those paths stay seeds. Their imports no longer resolve in the work tree, so
+  the extractor is handed the paths as extra members of the file set (never
+  scanned) and the graph is built in a scratch directory, leaving the shared
+  graph free of edges to files that are gone.
+- **`--base REF`** diffs from the merge-base of `REF` and `HEAD`, so it includes
+  the branch's commits *and* uncommitted and untracked work. An unknown `REF`
+  exits 1 with an error; it never reports "nothing changed".
+- **a project root below the git top level**: paths are relative to `--root`.
 
 Symbol mode seeds on the **definition**, not on every mention. Tracing from
 every file that says the word makes the walk start everywhere and mean
-nothing. If no definition matches, it falls back to every occurrence and says
-so.
+nothing. The symbol is regex-escaped, so `$store` and `a.b` mean what they
+say. A definition is a declaration keyword before the name (`function`,
+`class`, `def`, `fn`, `fun`, `val`, `type`, ...), a modifier-led member
+(`public static Foo name(`), a Go method (`func (r *T) Name(`), an assignment
+(`name = function`, a top-level `NAME = ...`) or `#define`. A name after
+`extends` or `implements` is a use, not a definition. If no definition matches,
+every file that mentions the symbol is a seed and the report says so;
+`<symbol> --file <path>` skips the guess and takes that file as the definition.
+
+Searching uses `git grep` inside a work tree, so `.gitignore` is honoured and
+no `rg` is needed; outside git it is `grep -r` with `.git`, `node_modules`,
+`dist`, `build` and the graph's own directory excluded.
 
 ## Reading the report
 
-Rows are grouped by depth. Depth 1 imports a seed directly; depth 2 imports
-something at depth 1. Breakage is near-certain at depth 1 and increasingly
-speculative after that.
+The first line is always
+`blast-radius: seeds=<n> affected=<n> depth=<d> edges=<e> gaps=<k>`: seeds and
+affected files, the deepest level reached, edges in the whole import graph
+(`0` means the graph is empty, not that nothing depends on the seed) and the
+number of blind spots. Then `## ` sections, each printed only when it has
+content (Seeds always): `Seeds`, `Depth 1`, `Depth 2`..., `Name matches`,
+`Tests to run`, `Blind spots`. Output is sorted, and `--max` keeps the first
+rows by path at each depth, so two runs print the same bytes.
 
-Three things need care:
+Rows are `path:line -> via`: that file imports `via` at that line. Depth 1
+imports a seed directly; depth 2 imports something at depth 1. Breakage is
+near-certain at depth 1 and increasingly speculative after that.
+
+Four things need care:
 
 **`[inferred import, verify]`** — the edge came from a path alias, a baseUrl
 specifier or a unique-suffix match, not a literal relative path. Usually
@@ -67,9 +99,23 @@ right; open it before acting.
 no import connects them to the seed. Those are usually a *different symbol
 with the same name*. Never fold them into the blast radius unread.
 
-**Blind spots** — the count of imports that did not resolve, by reason. If
-that number is high in the area you are changing, the walk is incomplete
-there and grep is the fallback for that part.
+**Tests to run** — affected, name-matched and changed files that look like
+tests: `*.test.*`, `*.spec.*`, `test_*.py`, `*_test.py`, `*_test.go`,
+`*Tests.cs`, `*Test.java`, `*_spec.rb`, and anything under `tests/`, `test/`,
+`__tests__/` or `spec/`. Run them.
+
+**Blind spots** — only imports that could have hidden an importer. Packages,
+the standard library and system headers (`external-package`, `stdlib`,
+`external-or-stdlib`, `external-or-jdk`, `external-crate`, `system-header`)
+are expected not to resolve and are not counted. What remains is counted in
+the seeds' own directories, by reason, and any unresolved import anywhere
+whose name matches a seed's file name is listed as a *possible missed
+importer*: a Vue `@/lib/auth` that no alias resolved still points at
+`src/lib/auth.ts`. If that list is not empty, grep is the fallback for that part.
+
+Exit codes: `0` ok or nothing changed; `1` usage error, an unknown `--base`, or
+the graph could not be built; `2` the symbol appears nowhere. Unknown flags and
+a flag with no value are usage errors, not ignored.
 
 ## What it cannot see
 
@@ -153,4 +199,7 @@ The graph rebuilds on every run by default, because a cached graph quietly
 describing yesterday's imports is worse than no graph. `--cached` skips it for
 a tight loop. The build is one awk pass over the source files; if it ever
 becomes the slow part on your repo, that is worth knowing and `--cached` is
-the escape hatch.
+the escape hatch. A `--diff` that includes a deleted or renamed-away file
+ignores `--cached` and says so: the cached graph cannot hold edges to a file
+that was not there when it was built. The graph is written to a temp file and
+renamed into place, and a failing extractor leaves the previous graph untouched.

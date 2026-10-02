@@ -671,18 +671,21 @@ fi
 
 # --- 17. blast-radius walks importers, not imports -------------------------
 BRP="$TMP/brproj"
-rm -rf "$BRP"; mkdir -p "$BRP/src/lib" "$BRP/src/api"
+mkdir -p "$BRP/src/lib" "$BRP/src/api"
 printf 'export function verify() { return true }\n' > "$BRP/src/lib/auth.ts"
 printf "import { verify } from '../lib/auth'\nexport const login = verify\n" > "$BRP/src/api/login.ts"
 printf "import { login } from './login'\nexport const r = login\n" > "$BRP/src/api/routes.ts"
 printf 'export const unrelated = 1\n' > "$BRP/src/api/other.ts"
 BR="$(sh scripts/blast-radius.sh --root "$BRP" --file src/lib/auth.ts --out "$TMP/brout" 2>&1)"
-case "$BR" in
-  *"src/api/login.ts"*) pass "blast-radius finds the direct importer" ;;
+# The lines of one `## ` section of a report, header to next blank line. The
+# importer must sit under the right depth header: the seed list never holds it.
+br_sect() { printf '%s\n' "$1" | awk -v h="## $2" '$0 == h { on = 1; next } on && !NF { on = 0 } /^## / { on = 0 } on'; }
+case "$(br_sect "$BR" "Depth 1")" in
+  *"src/api/login.ts:1 -> src/lib/auth.ts"*) pass "blast-radius finds the direct importer" ;;
   *) fail "blast-radius missed the direct importer"; printf '%s\n' "$BR" | head -6 | sed 's/^/        /' ;;
 esac
-case "$BR" in
-  *"src/api/routes.ts"*) pass "blast-radius follows the chain to depth 2" ;;
+case "$(br_sect "$BR" "Depth 2")" in
+  *"src/api/routes.ts:1 -> src/api/login.ts"*) pass "blast-radius follows the chain to depth 2" ;;
   *) fail "blast-radius did not reach the transitive importer" ;;
 esac
 case "$BR" in
@@ -724,19 +727,31 @@ grep -q 'real.ts' "$TMP/trapout/imports.tsv" 2>/dev/null \
   && pass "extractor still finds the real import beside the traps" \
   || fail "extractor missed the real import"
 
-# --- 19. --diff seeds from the working tree, untracked included ------------
+# --- 19. --diff seeds from the working tree and finds real importers --------
+# a.ts is tracked and edited, b.ts is a committed importer of it, c.ts is a new
+# untracked importer. b.ts is the proof: it is not itself changed, so it can
+# only appear if the walk really ran. (This test used to make a.ts and b.ts
+# both untracked, so both were seeds and "src/b.ts" matched the seed list even
+# when no importer was ever found.) The tests/checks/60-blast-radius.sh suite
+# covers deletions, renames, --base and subdirectory roots.
 DP="$TMP/diffproj"
-rm -rf "$DP"; mkdir -p "$DP/src"
-( cd "$DP" && git init -q . 2>/dev/null \
-  && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init 2>/dev/null ) || true
-printf 'export const a = 1\n' > "$DP/src/a.ts"
-printf "import { a } from './a'\nexport const b = a\n" > "$DP/src/b.ts"
-if [ -d "$DP/.git" ]; then
+mkdir -p "$DP/src"
+if ( cd "$DP" && git init -q . && git config user.email t@t && git config user.name t \
+     && git config core.autocrlf false ) >/dev/null 2>&1; then
+  printf 'export const a = 1\n' > "$DP/src/a.ts"
+  printf "import { a } from './a'\nexport const b = a\n" > "$DP/src/b.ts"
+  ( cd "$DP" && git add -A && git commit -q -m init ) >/dev/null 2>&1
+  printf 'export const a = 2\n' > "$DP/src/a.ts"
+  printf "import { a } from './a'\nexport const c = a\n" > "$DP/src/c.ts"
   DR="$(sh scripts/blast-radius.sh --root "$DP" --diff --out "$TMP/dout" 2>&1)"
-  case "$DR" in
-    *"src/b.ts"*) pass "--diff seeds from untracked files and finds their importers" ;;
-    *"nothing changed"*) fail "--diff reported nothing changed with untracked files present" ;;
-    *) fail "--diff did not trace the changed file" ;;
+  case "$(br_sect "$DR" "Depth 1")" in
+    *"src/b.ts:1 -> src/a.ts"*) pass "--diff finds the committed importer of a changed tracked file" ;;
+    *"nothing changed"*) fail "--diff reported nothing changed with edits present" ;;
+    *) fail "--diff did not find the importer of the changed file"; printf '%s\n' "$DR" | head -8 | sed 's/^/        /' ;;
+  esac
+  case "$(br_sect "$DR" "Seeds")" in
+    *"src/a.ts"*"src/c.ts"*) pass "--diff seeds from tracked edits and untracked files" ;;
+    *) fail "--diff seeds are wrong: $(br_sect "$DR" "Seeds" | tr '\n' ' ')" ;;
   esac
 else
   note "git unavailable - --diff mode untested"
