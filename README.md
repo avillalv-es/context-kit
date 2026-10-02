@@ -485,16 +485,19 @@ Symbol mode separates resolved dependencies from bare name matches, since
 "same name, unrelated symbol" is the common case and folding the two together
 is how an impact report becomes fiction.
 
-Resolution covers relative paths, `tsconfig`/`jsconfig` aliases from **every**
-config in the repo (monorepos declare their own), `go.mod` module prefixes
-from every module, composer PSR-4, Python dotted and relative imports, Rust
-`mod`/`use`, JVM packages, C `#include`, and the TypeScript ESM habit of
-writing `./x.js` for a file called `x.ts`. Anything it cannot resolve
-uniquely is **dropped with a reason**, never guessed — a wrong edge makes you
-stop looking, a missing one only makes you look further.
+Resolution covers relative paths, `tsconfig*`/`jsconfig*` aliases from
+**every** config in the repo (monorepos declare their own; create-vue keeps
+`@/*` in `tsconfig.app.json`), a relative `extends` followed one level, literal
+Vite `resolve.alias` entries, C# `using` namespaces matched to the files that
+declare them, `go.mod` module prefixes from every module, composer PSR-4,
+Python dotted and relative imports, Rust `mod`/`use`, JVM packages, C
+`#include`, and the TypeScript ESM habit of writing `./x.js` for a file called
+`x.ts`. Anything it cannot resolve uniquely is **dropped with a reason**, never
+guessed — a wrong edge makes you stop looking, a missing one only makes you
+look further.
 
-Eight language families have a fixture under `tests/fixtures/imports/`
-carrying the exact edge set `scripts/check.sh` asserts — 226 edges in all.
+Nine language families have a fixture under `tests/fixtures/imports/`
+carrying the exact edge set `scripts/check.sh` asserts — 254 edges in all.
 The fixture and an independent list of the edges it should produce were
 written separately and then reconciled, and the traps are there on purpose:
 imports inside Java text blocks, Kotlin raw strings, C++ raw strings, Ruby
