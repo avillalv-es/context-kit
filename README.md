@@ -189,7 +189,7 @@ the cause of this failure mode.
 | `/context-graph` | Draw the layout. `serve` for a URL, `vault` for Obsidian notes. |
 | `/finding` | Record a finding; `/finding reflect` rolls them into `LESSONS.md`. |
 | `/pr-train [status\|off\|on]` | Split a plan of several PR-sized asks into a PR train, resume an active one, or turn the `CLAUDE.md` section off or on. |
-| `/blast-radius` | What breaks if this changes. `--diff`, a symbol, or `--file`. |
+| `/blast-radius [<symbol> [--file P] \| <path> \| --diff [--base REF]]` | What breaks if this changes. No argument = `--diff`. Opens each importer and gives a verdict. |
 | `/context-init bootstrap` | Scaffold and stamp the managed sections only. No survey. |
 | `/skill-capture` | Turn a repeatable procedure into a project skill. |
 | `/lean lite\|full\|ultra\|off` | Set the execution level. Persists across sessions. |
@@ -234,6 +234,7 @@ Restart the session afterwards and run `/context` to see the real number.
 | `model-routing` | Model routing |
 | `context-sync` | Context sync |
 | `pr-train` | PR train |
+| `blast-radius` | Blast radius |
 
 Their text comes from the plugin (`templates/sections/`, and `hooks/rules.md`
 for Lean execution), copied in by `scripts/claude-sections.sh` rather than
@@ -425,36 +426,53 @@ it deliberately does not measure.
 ## Blast radius
 
 ```bash
-/blast-radius --diff                 # everything you just changed
+/blast-radius                        # no argument means --diff
 /blast-radius --diff --base main     # everything on this branch
-/blast-radius verifySignature        # a symbol
-/blast-radius --file src/lib/auth.ts # a file
+/blast-radius <symbol>               # a function, class or constant
+/blast-radius <symbol> --file <path> # ...as defined in that one file
+/blast-radius src/lib/auth.ts        # a path means --file
 ```
 
 Walks the import graph **backwards** from the seed and reports what is
-downstream, grouped by distance, with the importing line in each file:
+downstream, grouped by distance, with the importing line in each file. This is
+real output, from `tests/fixtures/imports/go` and trimmed with `...`:
 
 ```
-Blast radius
+blast-radius: seeds=1 affected=12 depth=2 edges=27 gaps=0
 
-Seed (1):
-  internal/util/strings.go
+## Seeds
+internal/util/strings.go
 
-9 files downstream, to depth 3:
+## Depth 1
+cmd/appsvc/dot_test.go:6 -> internal/util/strings.go
+internal/config/config.go:8 -> internal/util/strings.go
+...
 
-  depth 1 - imports a seed directly (3)
-    internal/config/config.go:8      -> internal/util/strings.go
-    internal/store/store.go:7        -> internal/util/strings.go
-    pkg/telemetry/metrics.go:3       -> internal/util/strings.go
+## Depth 2
+cmd/appsvc/main.go:16 -> internal/config/config.go
+...
 
-  depth 2 - imports something at depth 1 (6)
-    cmd/appsvc/main.go:16            -> internal/config/config.go
-    ...
+## Tests to run
+cmd/appsvc/dot_test.go
+cmd/appsvc/main_test.go
 ```
 
 `--diff` is the mode for audits and debugging: it seeds from every changed
-file at once — unstaged, staged **and untracked**, because a new file is the
-most common thing an audit adds and `git diff` alone never mentions one.
+file at once — unstaged, staged **and untracked**, plus deleted files and the
+old path of a rename, which is exactly where importers break; `--base REF`
+diffs from the merge-base and includes uncommitted work. Untracked files are
+in because a new file is the most common thing an audit adds and `git diff`
+alone never mentions one.
+
+The list is only where the work starts. The skill opens every depth-1 importer
+and gives it a breaks, must-update, safe or unclear verdict, then runs the
+"Tests to run". Blind spots count only actionable unresolved imports, and name
+the unresolved specifiers that match a seed.
+
+A managed "Blast radius" section in `CLAUDE.md` requires the skill before
+structural edits: exported signatures; renaming, moving or deleting files or
+exports; shared modules, schemas, config keys and routes.
+`/context-init off blast-radius` turns it off.
 
 **It is file-level, and the report never lets you forget it.** It follows
 imports, so it cannot see runtime wiring — route tables, DI containers,
@@ -603,6 +621,7 @@ context-kit/
 │   ├── context-sync/            # the session-start sync
 │   │   └── references/          # routing rules, read only when something changed
 │   ├── blast-radius/            # impact analysis, and how far to trust it
+│   │   └── references/          # reading-output.md, loaded when the report needs reading
 │   ├── finding-ledger/          # the working log and its lessons
 │   ├── skill-capture/           # writes new skills
 │   ├── lean-execution/          # the long-form ruleset

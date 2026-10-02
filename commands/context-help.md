@@ -14,7 +14,8 @@ context-kit
     /context-init bootstrap  scaffold + stamp the managed sections, no survey
     /context-init off <s>    turn a managed CLAUDE.md section off (or: on <s>)
                              sections: context-layout, lean-execution,
-                             model-routing, context-sync, pr-train
+                             model-routing, context-sync, pr-train,
+                             blast-radius
                              refreshed on re-run; edits inside the markers
                              are overwritten
     /context-sync            route PROGRESS.md, docs/ and notes into the tiers
@@ -31,9 +32,14 @@ context-kit
     /shortcut-ledger         every deliberate shortcut marked in this repo
 
   Impact
-    /blast-radius --diff     what breaks, given everything you just changed
-    /blast-radius <symbol>   what depends on a function, class or constant
-    /blast-radius --file P   what depends on a file
+    /blast-radius            = --diff (the default): what breaks, given
+                             everything you just changed
+    /blast-radius --diff --base REF
+                             ...everything since branching from REF
+    /blast-radius <symbol> [--file P]
+                             what depends on a function, class or constant
+    /blast-radius --file P | <path>
+                             what depends on a file
 
   Findings
     /finding                 record what you just settled, or a dead end
