@@ -136,6 +136,10 @@ reader is most likely to mistake it for a complete answer.
 "Nothing imports the seed" is three different statements — a genuine leaf, a
 runtime-wired module, or a resolution gap. The report distinguishes them.
 
+In C#, a file sees the namespaces that enclose its own without any `using`, and
+a `global using` reaches every file of its project, not only the file that
+carries it.
+
 ## How resolution works
 
 An import string becomes a file path, or it is dropped. It is never guessed.
@@ -143,13 +147,25 @@ An import string becomes a file path, or it is dropped. It is never guessed.
 1. **Relative** (`./x`, `../x`) — join with the importing file's directory,
    normalize, then try the path, then each extension, then `/index.*`,
    `/__init__.py` or `/mod.rs`.
-2. **Aliased** — every `tsconfig.json`/`jsconfig.json` in the repo, not just
-   the root one, because in a monorepo each package declares its own
-   `paths`. The longest matching scope wins. Same for composer PSR-4.
+2. **Aliased** — every `tsconfig*.json` and `jsconfig*.json` in the repo, not
+   just the root one. Each monorepo package declares its own `paths`, and
+   create-vue keeps `@/*` in `tsconfig.app.json`, not `tsconfig.json`. A
+   relative `extends` is followed one level: the child's `paths` replace the
+   base's, and `baseUrl` is read from the file that declares it. The literal
+   `resolve.alias` entries of every `vite.config.{ts,js,mjs,mts}` count too. An
+   alias that is not a literal (a variable, a regex, a template string) is
+   skipped, not guessed. The longest matching scope wins. Same for composer
+   PSR-4.
 3. **Module-rooted** — every `go.mod` in the repo, scoped the same way. The
    module prefix must end at a path boundary, or a sibling module named
    `example.com/app-contrib` resolves into `example.com/app`'s tree.
 4. **Dotted** (`a.b.C`) — tried as a path, then as a unique path *suffix*.
+   C# is the exception. A `using` names a namespace, never a file, so it is
+   matched exactly to the files that *declare* it (`namespace X.Y;` or
+   `namespace X.Y {`). `using static` and aliases also try the namespace one
+   segment up (two for a static, to allow a nested type). These edges are
+   inferred and capped at 50 per `using`. A namespace declared nowhere in the
+   repo (`System.*`, NuGet) is dropped as external.
 5. **Nothing unique** — dropped, with a reason, to `unresolved.tsv`.
 
 Ambiguity is always a drop. If two files in different directories share a
@@ -162,11 +178,12 @@ is what NodeNext codebases actually write.
 
 ## Languages
 
-JavaScript and TypeScript (incl. JSX, Vue, Svelte, Astro), Python, Go,
+JavaScript and TypeScript (incl. JSX and Vue; Svelte and Astro files are
+scanned the same way but have no fixture yet), Python, Go,
 Java/Kotlin/Scala/Groovy, C#, Rust, Ruby, PHP, C/C++/Objective-C, shell.
 
-Eight families have a fixture under `tests/fixtures/imports/<family>/`
-carrying an `EXPECTED.tsv` of the edges the extractor must find — 226 in
+Nine families have a fixture under `tests/fixtures/imports/<family>/`
+carrying an `EXPECTED.tsv` of the edges the extractor must find — 254 in
 all. `scripts/check.sh` asserts the exact set, so a missing edge and an
 invented one both fail.
 
