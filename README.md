@@ -195,6 +195,7 @@ the cause of this failure mode.
 | `/lean lite\|full\|ultra\|off` | Set the execution level. Persists across sessions. |
 | `/lean-review [--repo]` | What can be deleted. Diff by default, whole tree with `--repo`. |
 | `/model-routing [on\|off]` | Turn the Model routing section of `CLAUDE.md` on or off; no argument shows its state. |
+| `/forge-init [status\|off\|on]` | Give a Forge app its Forge knowledge: `knowledge/forge/`, a one-time `app.md`, and the opt-in Forge section of `CLAUDE.md`. Re-run to refresh. |
 | `/shortcut-ledger` | Every deliberate shortcut marked in this repo. |
 | `/context-help` | The reference card. |
 
@@ -235,6 +236,7 @@ Restart the session afterwards and run `/context` to see the real number.
 | `context-sync` | Context sync |
 | `pr-train` | PR train |
 | `blast-radius` | Blast radius |
+| `forge` | Forge (opt-in: only `/forge-init` adds it) |
 
 Their text comes from the plugin (`templates/sections/`, and `hooks/rules.md`
 for Lean execution), copied in by `scripts/claude-sections.sh` rather than
@@ -249,6 +251,22 @@ The block becomes a single `<!-- context-kit:off <section> -->` line that a
 refresh never adds back, and `/context-init on <section>` restores it.
 `/context-init cleanup` treats managed blocks as the plugin's and does not
 touch them.
+
+An **opt-in** section (`templates/sections/opt-in/`) is never added by a
+refresh. Its own command adds it with `on`; from then on a refresh keeps it
+current like the others. `forge` is the only one.
+
+### Forge
+
+`/forge-init` is for apps hosted on Forge, the on-prem app host. It copies the
+plugin's general Forge knowledge (`templates/forge/`: the platform shape, env
+and secrets, the SMTP relay, edge sign-in and the first Admin, the shared
+Postgres, files and backups, RBAC, release checklists, troubleshooting) into
+`knowledge/forge/`. It reads the repo, asks what is left, and writes
+`knowledge/forge/app.md`, the app's own Forge facts, once. Then it adds the
+`## Forge` section to `CLAUDE.md`, which says where both are. Re-running it
+refreshes the general files, showing a diff before it overwrites a local
+change; `app.md` is never overwritten. `/forge-init off` removes the section.
 
 ### Model routing
 
@@ -614,6 +632,7 @@ context-kit/
 │   ├── lean.md                  # /lean
 │   ├── lean-review.md           # /lean-review
 │   ├── model-routing.md         # /model-routing
+│   ├── forge-init.md            # /forge-init
 │   ├── pr-train.md              # /pr-train
 │   ├── shortcut-ledger.md       # /shortcut-ledger
 │   └── context-help.md          # /context-help
@@ -629,6 +648,7 @@ context-kit/
 │   ├── skill-capture/           # writes new skills
 │   ├── lean-execution/          # the long-form ruleset
 │   ├── lean-review/             # what can be deleted
+│   ├── forge-init/              # Forge knowledge and section for a Forge app
 │   ├── pr-train/                # split a plan into PRs, resume across /compact
 │   │   └── references/          # the parallel-lane prompt, loaded only for a batch
 │   └── shortcut-ledger/         # the debt ledger

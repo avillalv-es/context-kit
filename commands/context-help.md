@@ -45,6 +45,12 @@ context-kit
     /finding                 record what you just settled, or a dead end
     /finding reflect         roll every entry into findings/LESSONS.md
 
+  Forge
+    /forge-init              write knowledge/forge/, app.md once, and the
+                             opt-in Forge section; re-run to refresh
+    /forge-init status|off|on
+                             show, remove or restore the Forge section
+
   PR train
     /pr-train                split the agreed plan into PRs, or resume the
                              active train in .claude/handoff/
