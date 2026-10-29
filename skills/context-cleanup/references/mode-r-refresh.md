@@ -21,7 +21,8 @@ sh "${CLAUDE_PLUGIN_ROOT}/scripts/claude-sections.sh" stamp CLAUDE.md
 
 It adds the sections that are missing, rewrites the outdated ones between
 their markers, wraps blocks written by 0.4.x in markers, and leaves a section
-that was turned off alone. Edits inside the markers are overwritten, which is
+that was turned off alone. An opt-in section (`forge`) is refreshed only
+when it is already there; it is never added here. Edits inside the markers are overwritten, which is
 the point: the text comes from the plugin. Everything outside the markers is
 left exactly as it was. Keep its output for R5, and pass on any warning it
 prints about a block it left untouched.

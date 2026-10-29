@@ -5,7 +5,7 @@
 #   claude-sections.sh status [FILE] [--level L]   one line per section
 #   claude-sections.sh stamp  [FILE] [--level L]   add, update and migrate sections
 #   claude-sections.sh off ID [FILE]               turn one section off
-#   claude-sections.sh on  ID [FILE] [--level L]   bring it back
+#   claude-sections.sh on  ID [FILE] [--level L]   bring it back, or add an opt-in one
 #
 # FILE defaults to ./CLAUDE.md. L is lite, full or ultra and only matters to the
 # lean-execution section; without it the level resolves the way the hooks do.
@@ -20,6 +20,11 @@
 #
 # A section the user turned off is the single line <!-- context-kit:off <id> -->
 # and is never added back by `stamp`.
+#
+# Opt-in sections live in templates/sections/opt-in/NN-<id>.md and share the NN
+# order with the rest. `stamp` never adds one and `status` says nothing about one
+# that is absent, so a repo that did not opt in is never nagged. Only `on <id>`
+# adds it; once present it is kept current, turned off and on like any other.
 #
 # There are no version numbers. A block is outdated when the text between its
 # markers differs from what would be generated now, so the plugin only has to
@@ -52,6 +57,7 @@ set -u
 SELF_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)" || SELF_DIR="."
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$SELF_DIR/.." 2>/dev/null && pwd)}"
 SECDIR="$PLUGIN_ROOT/templates/sections"
+OPTDIR="$SECDIR/opt-in"
 RULES="$PLUGIN_ROOT/hooks/rules.md"
 DATA="${CLAUDE_PLUGIN_DATA:-${HOME:-}/.claude/context-kit}"
 
@@ -79,13 +85,25 @@ esac
 
 # --- the sections ----------------------------------------------------------
 # The id is the file name without its NN- prefix and .md; the glob sorts by NN.
-IDS=""
+# The two dirs are each sorted, so the opt-in ones are merged into the main list
+# by NN with builtins only. A missing opt-in dir just leaves its glob unmatched.
+MAINL=""; OPTL=""
 for f in "$SECDIR"/[0-9][0-9]-*.md; do
   [ -f "$f" ] || continue
-  b="${f##*/}"; b="${b#??-}"
-  IDS="$IDS ${b%.md}"
+  b="${f##*/}"; MAINL="$MAINL ${b%.md}"
 done
-IDS="${IDS# }"
+for f in "$OPTDIR"/[0-9][0-9]-*.md; do
+  [ -f "$f" ] || continue
+  b="${f##*/}"; OPTL="$OPTL ${b%.md}"
+done
+IDS=""; OPTIN=""
+set -- $MAINL
+for o in $OPTL; do
+  while [ $# -gt 0 ] && [ "${1%%-*}" -lt "${o%%-*}" ]; do IDS="$IDS ${1#??-}"; shift; done
+  IDS="$IDS ${o#??-}"; OPTIN="$OPTIN ${o#??-}"
+done
+for m in "$@"; do IDS="$IDS ${m#??-}"; done
+IDS="${IDS# }"; OPTIN="${OPTIN# }"
 
 # Same order as the hooks' resolve_level: the flag, then the environment, then
 # the level file, then full. `off` has no ruleset to stamp, so it stamps as full.
@@ -164,8 +182,9 @@ want_lean() {
 
 # --- the awk ----------------------------------------------------------------
 # Reads FILE once and, by CK_MODE, reports (status) or edits and reports
-# (stamp, off, on). Inputs come through the environment: CK_IDS, CK_WANTS,
-# CK_ID, CK_CRLF, and CK_FILE for the write-back. Exit status is its verdict.
+# (stamp, off, on). Inputs come through the environment: CK_IDS, CK_OPTIN (the
+# opt-in ids), CK_WANTS, CK_ID, CK_CRLF, and CK_FILE for the write-back. Exit
+# status is its verdict.
 #
 # Blocks are found first: one record per id, as kind and line span.
 #   off        <!-- context-kit:off ID --> (every such line is remembered)
@@ -264,9 +283,13 @@ function warn(s) { print "claude-sections: " s > "/dev/stderr" }
 function replace(s, e, how, id) { rk[s] = how; re[s] = e; ri[s] = id; changed = 1 }
 function append(how, id) { app[++napp] = how SUBSEP id; changed = 1 }
 
-# Bring one section up to date. Returns what it did, or "" for nothing.
-function stamp_one(id) {
-  if (!(id in kind)) { append("block", id); return "added" }
+# Bring one section up to date. Returns what it did, or "" for nothing. A missing
+# opt-in section is added only when force is set (`on`), never by `stamp`.
+function stamp_one(id, force) {
+  if (!(id in kind)) {
+    if ((id in optin) && !force) return ""
+    append("block", id); return "added"
+  }
   if (kind[id] == "marked") {
     if (current(id, ks[id], ke[id])) return ""
     replace(ks[id] + 1, ke[id] - 1, "body", id)
@@ -291,6 +314,9 @@ BEGIN {
   mode = ENVIRON["CK_MODE"]; tid = ENVIRON["CK_ID"]
   eol = (ENVIRON["CK_CRLF"] == "1") ? "\r" : ""
   nids = split(ENVIRON["CK_IDS"], ids, " ")
+  n = split(ENVIRON["CK_OPTIN"], oi, " ")
+  for (i = 1; i <= n; i++) optin[oi[i]] = 1
+  n = 0
   parse_wants()
 }
 { sub(/\r$/, ""); L[NR] = $0 }
@@ -298,7 +324,11 @@ END {
   locate()
 
   if (mode == "status") {
-    for (i = 1; i <= nids; i++) print word(ids[i]), ids[i]
+    for (i = 1; i <= nids; i++) {
+      # An opt-in section that was never added is not a problem to report.
+      if ((ids[i] in optin) && !(ids[i] in kind)) continue
+      print word(ids[i]), ids[i]
+    }
     exit 0
   }
 
@@ -321,7 +351,7 @@ END {
       for (k = 2; k <= noff[tid]; k++) replace(offl[tid, k], offl[tid, k], "del", tid)
       say("on " tid)
     } else {
-      act = stamp_one(tid)
+      act = stamp_one(tid, 1)
       say("on " tid (act != "" ? " (" act ")" : " (unchanged)"))
     }
   } else exit 1
@@ -353,7 +383,7 @@ END {
 '
 
 run() {  # $1 mode
-  CK_MODE="$1" CK_ID="${ID:-}" CK_IDS="$IDS" CK_WANTS="$WANTS" CK_CRLF="$CRLF" \
+  CK_MODE="$1" CK_ID="${ID:-}" CK_IDS="$IDS" CK_OPTIN="$OPTIN" CK_WANTS="$WANTS" CK_CRLF="$CRLF" \
     CK_FILE="$FILE" awk "$AWKPROG" "$INPUT"
 }
 
@@ -373,6 +403,7 @@ prepare() {
       want_lean
     else
       set -- "$SECDIR"/[0-9][0-9]-"$id".md
+      [ -f "$1" ] || set -- "$OPTDIR"/[0-9][0-9]-"$id".md
       want_template "$id" "$1"
     fi
   done
@@ -388,16 +419,18 @@ usage() {
 claude-sections - keep the plugin-owned sections of CLAUDE.md current
 
   status [FILE]   one line per section: ok, missing, outdated, off, legacy
-                  or legacy-unbounded
+                  or legacy-unbounded (an absent opt-in section prints nothing)
   stamp  [FILE]   add missing sections at the end, rewrite outdated ones in
-                  place, wrap 0.4.x blocks in markers, leave off sections alone
+                  place, wrap 0.4.x blocks in markers, leave off sections alone;
+                  never adds an opt-in section
   off ID [FILE]   replace a section with <!-- context-kit:off ID -->
-  on  ID [FILE]   put it back
+  on  ID [FILE]   put it back; the only way to add an opt-in section
   --level L       lite, full or ultra: the level the lean-execution section is
                   stamped at (default: the hooks' level)
 
 FILE defaults to ./CLAUDE.md. `stamp` needs the file to exist. Sections live
-in templates/sections/; edits inside a stamped block are overwritten.
+in templates/sections/, opt-in ones in templates/sections/opt-in/; edits
+inside a stamped block are overwritten.
 HELP
 }
 
