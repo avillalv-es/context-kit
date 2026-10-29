@@ -4,6 +4,18 @@ Owned by this repo: written once by `/forge-init`, **never overwritten**. Add to
 other files in this folder are plugin-owned and describe Forge in general. Names only, never
 values, secrets or real hostnames.
 
+## Features
+
+`/forge-init` asks for these and copies the matching files. Re-run it to add one.
+
+- [x] Entra edge sign-in (always)
+- [x] Healer (always)
+- [ ] Postgres
+- [ ] Blob storage (S3)
+- [ ] Email (SMTP)
+- [ ] RBAC
+- [ ] Scheduler / backups
+
 ## Forge apps
 
 | Forge app | Container | Port | Dockerfile | Context | Health path | Watched branch (ask an Admin) |
@@ -14,6 +26,14 @@ values, secrets or real hostnames.
 
 - harnesses: `<blob | none>`
 - needs: `<rbac | postgres | none>`
+
+## Secrets an Admin must set
+
+Names only, in the secret field (Containers ▸ app ▸ Env & secrets). Entra sign-in needs none.
+
+| Name | Forge app | Why |
+|---|---|---|
+| `<APP>_<NAME>` | `<app-name>` | `<e.g. database URL, external API credential>` |
 
 ## Env vars
 

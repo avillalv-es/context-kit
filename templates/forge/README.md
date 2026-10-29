@@ -15,9 +15,14 @@ guide (My apps ▸ Developer guide) before relying on it.
 
 ## Files
 
+Every app gets all of these except the feature files. A feature file (`database.md`,
+`files-backups-scheduler.md`, `email-smtp.md`, `rbac.md`) is copied only when the app uses that
+feature; a missing one means the feature is not in use. Re-run `/forge-init` to add it.
+
 | File | Read it when |
 |---|---|
 | [app.md](app.md) | Always: this app's Forge apps, build sources, env list, release steps and failures. |
+| [first-deploy.md](first-deploy.md) | Getting the app onto Forge the first time: what Dev does in the repo, what to ask an Admin for, what to check after. |
 | [platform.md](platform.md) | First time on Forge: the shape (edge, path prefix), what a container must do, the web+API pattern, `forge.yaml`, build source, who can do what, optional services. |
 | [env-and-secrets.md](env-and-secrets.md) | Setting or changing any variable: the layers, Restart vs Rebuild & deploy, secrets, build-time vs runtime values, what Forge injects. |
 | [email-smtp.md](email-smtp.md) | Anything about mail: the IT relay's rules, the settings an app needs, what the code must do to comply, test mode vs dev redirect, kill switch, verifying a send, failure modes. |

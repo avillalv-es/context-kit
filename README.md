@@ -258,15 +258,25 @@ current like the others. `forge` is the only one.
 
 ### Forge
 
-`/forge-init` is for apps hosted on Forge, the on-prem app host. It copies the
-plugin's general Forge knowledge (`templates/forge/`: the platform shape, env
-and secrets, the SMTP relay, edge sign-in and the first Admin, the shared
-Postgres, files and backups, RBAC, release checklists, troubleshooting) into
-`knowledge/forge/`. It reads the repo, asks what is left, and writes
-`knowledge/forge/app.md`, the app's own Forge facts, once. Then it adds the
-`## Forge` section to `CLAUDE.md`, which says where both are. Re-running it
-refreshes the general files, showing a diff before it overwrites a local
-change; `app.md` is never overwritten. `/forge-init off` removes the section.
+`/forge-init` is for apps hosted on Forge, the on-prem app host. It reads the
+repo, then asks once which features the app uses: Postgres, blob storage (S3),
+email through the SMTP relay, RBAC, scheduler and backups. Entra edge sign-in,
+Healer, the container rules, env and secrets, the first deploy, releases and
+troubleshooting are always included.
+
+It copies the matching general knowledge from `templates/forge/` into
+`knowledge/forge/`, and writes `knowledge/forge/app.md` with the app's
+features, Forge apps, the secrets an Admin must set (names only) and its env
+list. It adds the `## Forge` section to `CLAUDE.md`, which says where both are.
+Last, it fills in an adoption prompt (`.claude/forge/adopt-prompt.md`) and
+enters plan mode to plan every change the app needs: Dockerfiles, `forge.yaml`,
+Entra token verification, config validation, each chosen feature, a smoke
+script and the Admin hand-over list. Nothing is coded before the plan is
+approved.
+
+Re-running it refreshes the general files, showing a diff before it overwrites
+a local change, and can add features. `app.md` is only ever added to.
+`/forge-init off` removes the section.
 
 ### Model routing
 
@@ -648,7 +658,8 @@ context-kit/
 │   ├── skill-capture/           # writes new skills
 │   ├── lean-execution/          # the long-form ruleset
 │   ├── lean-review/             # what can be deleted
-│   ├── forge-init/              # Forge knowledge and section for a Forge app
+│   ├── forge-init/              # Forge features, knowledge, section, adoption plan
+│   │   └── references/          # adopt-prompt.md, filled in and planned from
 │   ├── pr-train/                # split a plan into PRs, resume across /compact
 │   │   └── references/          # the parallel-lane prompt, loaded only for a batch
 │   └── shortcut-ledger/         # the debt ledger

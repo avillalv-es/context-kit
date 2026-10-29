@@ -2,9 +2,11 @@
 description: Set up a Forge app - write knowledge/forge/ and the CLAUDE.md Forge section, refresh them, or turn the section off or on
 ---
 
-With no argument: use the `forge-init` skill, which installs or refreshes
-`knowledge/forge/`, writes `knowledge/forge/app.md` once, and adds the Forge
-section to `CLAUDE.md`.
+With no argument: use the `forge-init` skill. It asks which Forge features the
+app uses, installs or refreshes the matching `knowledge/forge/` files, writes
+`knowledge/forge/app.md` (features, apps, secrets, env), adds the Forge section
+to `CLAUDE.md`, then plans every code change in plan mode. Entra sign-in is
+always included.
 
 With `status`: run
 `sh "${CLAUDE_PLUGIN_ROOT}/scripts/claude-sections.sh" status CLAUDE.md`,

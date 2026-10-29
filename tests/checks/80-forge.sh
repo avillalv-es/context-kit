@@ -93,16 +93,16 @@ else
 fi
 
 # The doc set: exactly these files, and nothing from the apps it was drawn from.
-FG_WANT="README.md platform.md env-and-secrets.md email-smtp.md sign-in-and-first-admin.md database.md files-backups-scheduler.md rbac.md release-checklists.md troubleshooting.md app.md"
+FG_WANT="README.md platform.md env-and-secrets.md email-smtp.md sign-in-and-first-admin.md database.md files-backups-scheduler.md rbac.md release-checklists.md troubleshooting.md first-deploy.md app.md"
 FG_N=0; FG_MISS=""
 for f in $FG_WANT; do [ -f "templates/forge/$f" ] || FG_MISS="$FG_MISS $f"; done
 if [ -d templates/forge ]; then
   for f in templates/forge/* templates/forge/.[!.]*; do [ -e "$f" ] && FG_N=$((FG_N + 1)); done
 fi
-if [ "$FG_N" -eq 11 ] && [ -z "$FG_MISS" ]; then
-  pass "templates/forge/ holds exactly the 11 doc files"
+if [ "$FG_N" -eq 12 ] && [ -z "$FG_MISS" ]; then
+  pass "templates/forge/ holds exactly the 12 doc files"
 else
-  fail "templates/forge/ is not exactly the 11 expected files (have $FG_N, missing:$FG_MISS)"
+  fail "templates/forge/ is not exactly the 12 expected files (have $FG_N, missing:$FG_MISS)"
 fi
 if [ -d templates/forge ] && ! grep -rqiE 'prds|alphapack' templates/forge; then
   pass "templates/forge/ names no source app (prds, alphapack)"
@@ -121,6 +121,26 @@ if [ -f "$FG_SKILL" ] && grep -q '^name: forge-init' "$FG_SKILL"; then
   pass "forge-init skill exists with its name"
 else
   fail "$FG_SKILL is missing or lacks 'name: forge-init'"
+fi
+
+# The skill asks for features, maps each feature file it may copy, and ends in
+# plan mode from its adoption prompt; Entra sign-in is in that prompt unasked.
+FG_PROMPT=skills/forge-init/references/adopt-prompt.md
+FG_MAPOK=1
+for f in database.md files-backups-scheduler.md email-smtp.md rbac.md first-deploy.md; do
+  grep -q "\`$f\`" "$FG_SKILL" 2>/dev/null || FG_MAPOK=0
+done
+if [ "$FG_MAPOK" -eq 1 ] && grep -q 'AskUserQuestion' "$FG_SKILL" && grep -q 'EnterPlanMode' "$FG_SKILL" \
+   && grep -q 'adopt-prompt.md' "$FG_SKILL"; then
+  pass "forge-init asks for features, maps every feature file and plans in plan mode"
+else
+  fail "$FG_SKILL is missing the feature question, a feature file, EnterPlanMode or adopt-prompt.md"
+fi
+if [ -f "$FG_PROMPT" ] && grep -q 'JWKS' "$FG_PROMPT" && grep -q 'no client secret' "$FG_PROMPT" \
+   && ! grep -qiE 'prds|alphapack' "$FG_PROMPT"; then
+  pass "the adoption prompt carries Entra token verification and names no source app"
+else
+  fail "$FG_PROMPT is missing, lacks the Entra verification steps, or names a source app"
 fi
 
 # What the session hook sees: every default section stamped, and no line that is
