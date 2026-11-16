@@ -143,6 +143,22 @@ else
   fail "$FG_PROMPT is missing, lacks the Entra verification steps, or names a source app"
 fi
 
+# /forge: the skill reads Forge's guide live and must never bundle it, since
+# the guide is internal and this repo is public.
+FG_G=skills/forge
+if grep -q '^name: forge$' "$FG_G/SKILL.md" 2>/dev/null && grep -q 'forge_dev_guide_page' "$FG_G/SKILL.md" \
+   && grep -q '\$ARGUMENTS' commands/forge.md 2>/dev/null && grep -q '`forge`' commands/forge.md; then
+  pass "forge skill exists, reads the guide live, and has its command"
+else
+  fail "$FG_G/SKILL.md or commands/forge.md is missing, or the skill lacks forge_dev_guide_page"
+fi
+FG_EXTRA=$(find "$FG_G" -type f ! -name SKILL.md 2>/dev/null | head -3)
+if [ -z "$FG_EXTRA" ] && ! grep -qiE 'login\.microsoftonline|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-' "$FG_G/SKILL.md"; then
+  pass "forge skill bundles no guide pages and no tenant or client ids"
+else
+  fail "forge skill bundles internal content: $FG_EXTRA"
+fi
+
 # What the session hook sees: every default section stamped, and no line that is
 # not ok or off, so the opt-in section never reads as missing.
 printf '# Hook\n' > "$FG/hook.md"

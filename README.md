@@ -196,6 +196,7 @@ the cause of this failure mode.
 | `/lean-review [--repo]` | What can be deleted. Diff by default, whole tree with `--repo`. |
 | `/model-routing [on\|off]` | Turn the Model routing section of `CLAUDE.md` on or off; no argument shows its state. |
 | `/forge-init [status\|off\|on]` | Give a Forge app its Forge knowledge: `knowledge/forge/`, a one-time `app.md`, and the opt-in Forge section of `CLAUDE.md`. Re-run to refresh. |
+| `/forge [<question>\|refresh]` | Answer what Forge needs (forge.yaml, deploys, env, sign-in, harnesses) from Forge's own developer guide, read live. `refresh` keeps a local copy outside the repo. |
 | `/shortcut-ledger` | Every deliberate shortcut marked in this repo. |
 | `/context-help` | The reference card. |
 
@@ -277,6 +278,12 @@ approved.
 Re-running it refreshes the general files, showing a diff before it overwrites
 a local change, and can add features. `app.md` is only ever added to.
 `/forge-init off` removes the section.
+
+`/forge <question>` answers what Forge needs or does from Forge's own developer
+guide, read live through Forge's MCP server (`forge_dev_guide_page`). Claude
+also reaches for it on its own when a Forge rule is in doubt or a deploy fails.
+The guide is internal, so the plugin does not bundle it: `/forge refresh` keeps
+a local copy in `~/.claude/forge-guide/`, outside every repo.
 
 ### Model routing
 
@@ -643,6 +650,7 @@ context-kit/
 │   ├── lean-review.md           # /lean-review
 │   ├── model-routing.md         # /model-routing
 │   ├── forge-init.md            # /forge-init
+│   ├── forge.md                 # /forge
 │   ├── pr-train.md              # /pr-train
 │   ├── shortcut-ledger.md       # /shortcut-ledger
 │   └── context-help.md          # /context-help
@@ -658,6 +666,7 @@ context-kit/
 │   ├── skill-capture/           # writes new skills
 │   ├── lean-execution/          # the long-form ruleset
 │   ├── lean-review/             # what can be deleted
+│   ├── forge/                   # answers Forge questions from the live developer guide
 │   ├── forge-init/              # Forge features, knowledge, section, adoption plan
 │   │   └── references/          # adopt-prompt.md, filled in and planned from
 │   ├── pr-train/                # split a plan into PRs, resume across /compact
