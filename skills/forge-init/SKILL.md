@@ -14,6 +14,10 @@ The general files are plugin-owned. They come from
 `${CLAUDE_PLUGIN_ROOT}/templates/forge/` and a re-run brings them up to date.
 `app.md` belongs to the repo: it is written once and only ever added to.
 
+The `forge` skill reads Forge's own developer guide live. When a template
+here and the guide disagree on a Forge-wide rule, follow the guide and say so
+in one line.
+
 Never write a value, secret, connection string or real hostname into any of
 these files. Env vars and secrets are listed by name only.
 
