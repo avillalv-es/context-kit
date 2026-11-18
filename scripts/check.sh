@@ -60,6 +60,20 @@ for f in skills/*/SKILL.md; do
 done
 [ "$DESC_FAIL" -eq 0 ] && pass "every skill description is written as a trigger"
 
+# Claude rejects a plugin upload when any skill description contains something
+# that parses as an XML tag (e.g. a placeholder like /app/<name>/). Read only the
+# frontmatter, so tags in the skill body are still allowed.
+TAG_FAIL=0
+for f in skills/*/SKILL.md; do
+  D=$(awk 'NR==1 && /^---$/ {fm=1; next} fm && /^---$/ {exit} fm' "$f" \
+    | awk '/^description:/ {on=1} on && /^[a-z-]+:/ && !/^description:/ {exit} on')
+  if printf '%s' "$D" | grep -Eq '<[^>]*>'; then
+    fail "$f description contains an XML-like tag; Claude rejects it on upload"
+    TAG_FAIL=1
+  fi
+done
+[ "$TAG_FAIL" -eq 0 ] && pass "no skill description contains an XML-like tag"
+
 # --- 4. hooks emit valid-looking JSON --------------------------------------
 TMP="${TMPDIR:-/tmp}/ck-check-$$"
 mkdir -p "$TMP/data" "$TMP/proj" 2>/dev/null
