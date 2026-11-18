@@ -1,6 +1,6 @@
 ---
 name: forge
-description: Use when you are unsure what Forge (the on-prem app platform) needs or does - forge.yaml keys, the Dockerfile and container rules, the /app/<name>/ base path, builds and deploys, env vars and secrets, sign-in vs access control, onboarding steps and probes, harnesses (Healer, RBAC, Postgres, blob/S3, AI gateway, Agent API, OCR, RAG, chat), API keys, developer access, Forge's MCP tools, agent PRs, or end-user guides; when a Forge build or deploy fails; or when the user runs /forge. Answers from Forge's own developer guide, read live. Do not use to set a repo up for Forge from scratch; that is forge-init.
+description: Use when you are unsure what Forge (the on-prem app platform) needs or does - forge.yaml keys, the Dockerfile and container rules, the /app/ base path, builds and deploys, env vars and secrets, sign-in vs access control, onboarding steps and probes, harnesses (Healer, RBAC, Postgres, blob/S3, AI gateway, Agent API, OCR, RAG, chat), API keys, developer access, Forge's MCP tools, agent PRs, or end-user guides; when a Forge build or deploy fails; or when the user runs /forge. Answers from Forge's own developer guide, read live. Do not use to set a repo up for Forge from scratch; that is forge-init.
 ---
 
 # Forge developer guide
